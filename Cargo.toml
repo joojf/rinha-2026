@@ -1,0 +1,17 @@
+[package]
+name = "rinha-2026"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mimalloc = { version = "0.1.50", default-features = false }
+monoio = { version = "0.2.4", features = ["sync"] }
+monoio-http = "0.3.12"
+sonic-rs = "0.5.8"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
