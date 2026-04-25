@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytes = "1.11.1"
+http = "1.4.0"
 mimalloc = { version = "0.1.50", default-features = false }
 monoio = { version = "0.2.4", features = ["sync"] }
 monoio-http = "0.3.12"
+serde = { version = "1.0.228", features = ["derive"] }
 sonic-rs = "0.5.8"
 
 [profile.release]

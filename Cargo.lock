@@ -616,9 +616,12 @@ dependencies = [
 name = "rinha-2026"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http",
  "mimalloc",
  "monoio",
  "monoio-http",
+ "serde",
  "sonic-rs",
 ]
 
