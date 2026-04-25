@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aligned-vec = "0.6.4"
 bytes = "1.11.1"
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 http = "1.4.0"
 mimalloc = { version = "0.1.50", default-features = false }
 monoio = { version = "0.2.4", features = ["sync"] }

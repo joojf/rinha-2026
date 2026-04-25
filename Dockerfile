@@ -7,6 +7,7 @@ RUN mkdir src && echo 'fn main(){}' > src/main.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release && \
     rm -rf src
 
+COPY spec/resources ./spec/resources
 COPY src ./src
 RUN touch src/main.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
