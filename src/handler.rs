@@ -4,7 +4,7 @@ use monoio::io::stream::Stream;
 use monoio_http::{common::response::Response, h1::payload::Payload};
 use std::sync::atomic::Ordering;
 
-use crate::{payload, response, READY};
+use crate::{payload, response, search, vectorize, DATASET, MCC, NORM, READY};
 
 pub async fn handle_request(req: http::Request<Payload>) -> Response {
     let method = req.method().clone();
@@ -30,15 +30,21 @@ pub async fn handle_request(req: http::Request<Payload>) -> Response {
 async fn handle_fraud_score(body: Payload) -> Response {
     let bytes = match read_body(body).await {
         Some(b) => b,
-        None => return response::ok_fraud_score(),
+        None => return response::ok_fraud_score(0),
     };
 
-    let _req = match payload::parse(&bytes) {
+    let req = match payload::parse(&bytes) {
         Ok(r) => r,
-        Err(_) => return response::ok_fraud_score(),
+        Err(_) => return response::ok_fraud_score(0),
     };
 
-    response::ok_fraud_score()
+    let norm = NORM.get().unwrap();
+    let mcc = MCC.get().unwrap();
+    let ds = DATASET.get().unwrap();
+
+    let q = vectorize::vectorize(&req, norm, mcc);
+    let fraud_count = search::knn5_fraud_count(&q, ds);
+    response::ok_fraud_score(fraud_count)
 }
 
 async fn read_body(body: Payload) -> Option<Bytes> {

@@ -8,6 +8,7 @@ mod mcc_risk;
 mod normalization;
 mod payload;
 mod response;
+mod search;
 mod server;
 mod vectorize;
 

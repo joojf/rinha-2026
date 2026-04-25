@@ -5,16 +5,22 @@ use monoio_http::{
     h1::payload::{FixedPayload, Payload},
 };
 
-const BODY_FRAUD_OK: &[u8] = b"{\"approved\":true,\"fraud_score\":0.0}";
+const BODIES: [&[u8]; 6] = [
+    br#"{"approved":true,"fraud_score":0.0}"#,
+    br#"{"approved":true,"fraud_score":0.2}"#,
+    br#"{"approved":true,"fraud_score":0.4}"#,
+    br#"{"approved":false,"fraud_score":0.6}"#,
+    br#"{"approved":false,"fraud_score":0.8}"#,
+    br#"{"approved":false,"fraud_score":1.0}"#,
+];
 
-pub fn ok_fraud_score() -> Response {
+pub fn ok_fraud_score(fraud_count: u8) -> Response {
+    let body = BODIES[fraud_count.min(5) as usize];
     Builder::new()
         .status(StatusCode::OK)
         .header("content-type", "application/json")
-        .header("content-length", BODY_FRAUD_OK.len().to_string())
-        .body(Payload::Fixed(FixedPayload::new(Bytes::from_static(
-            BODY_FRAUD_OK,
-        ))))
+        .header("content-length", body.len().to_string())
+        .body(Payload::Fixed(FixedPayload::new(Bytes::from_static(body))))
         .unwrap()
 }
 
