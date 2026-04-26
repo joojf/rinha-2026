@@ -3,13 +3,17 @@ FROM --platform=linux/amd64 rust:1.95-slim AS builder
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main(){}' > src/main.rs && \
+RUN mkdir src benches && \
+    echo 'fn main(){}' > src/main.rs && \
+    touch src/lib.rs && \
+    echo 'fn main(){}' > benches/score.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release && \
-    rm -rf src
+    rm -rf src benches
 
 COPY spec/resources ./spec/resources
 COPY src ./src
-RUN touch src/main.rs && \
+RUN mkdir -p benches && echo 'fn main(){}' > benches/score.rs && \
+    touch src/lib.rs src/main.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
 
 
