@@ -20,3 +20,29 @@ A API fica disponível em `http://localhost:9999`.
 Produção: 2 instâncias API comunicam com o nginx via Unix sockets (`/sockets/api1.sock`, `/sockets/api2.sock`). Sem TCP local entre LB e APIs.
 
 Dev (sem Docker): `LISTEN_TCP=0.0.0.0:8080 cargo run --release`
+
+## Testes
+
+```
+cargo test
+```
+
+45 testes unitários cobrindo payload parsing, vetorização 14D, busca k-NN, MCC lookup, normalização, dataset e respostas HTTP.
+
+## Benchmark
+
+```
+cargo bench
+```
+
+Mede parse, vetorização, busca e pipeline end-to-end. Meta: `score_end_to_end` < 100µs em hardware local.
+
+## Teste de carga (k6 oficial)
+
+Pré-requisito: [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) instalado no host.
+
+```
+./run-test.sh
+```
+
+Sobe a stack, aguarda `/ready`, roda o k6 oficial contra `:9999`, exibe `results.json` com `final_score`. Grava uso de CPU/memória por container em `docker-stats.log` durante o teste. Derruba a stack ao final.

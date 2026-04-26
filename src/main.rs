@@ -1,25 +1,12 @@
-use mimalloc::MiMalloc;
-use monoio::{net::TcpListener, IoUringDriver};
-use std::sync::{OnceLock, atomic::{AtomicBool, Ordering}};
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::Ordering;
+use monoio::{net::TcpListener, IoUringDriver};
 
-mod dataset;
-mod handler;
-mod mcc_risk;
-mod normalization;
-mod payload;
-mod response;
-mod search;
-mod server;
-mod vectorize;
-
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-pub static READY: AtomicBool = AtomicBool::new(false);
-pub static NORM: OnceLock<normalization::Normalization> = OnceLock::new();
-pub static MCC: OnceLock<mcc_risk::MccRisk> = OnceLock::new();
-pub static DATASET: OnceLock<dataset::Dataset> = OnceLock::new();
+use rinha_2026::{
+    dataset, mcc_risk, normalization,
+    search, server,
+    DATASET, MCC, NORM, READY,
+};
 
 fn main() {
     NORM.set(normalization::Normalization::load_embedded()).ok();

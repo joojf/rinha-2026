@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -46,8 +44,47 @@ pub struct FraudRequest {
     pub last_transaction: Option<LastTransaction>,
 }
 
-pub fn parse(buf: &[u8]) -> Result<FraudRequest, sonic_rs::Error> {
-    sonic_rs::from_slice(buf)
+#[derive(Debug)]
+pub enum ParseError {
+    Json(sonic_rs::Error),
+    BadTimestamp,
+}
+
+impl From<sonic_rs::Error> for ParseError {
+    fn from(e: sonic_rs::Error) -> Self {
+        ParseError::Json(e)
+    }
+}
+
+pub fn parse(buf: &[u8]) -> Result<FraudRequest, ParseError> {
+    let req: FraudRequest = sonic_rs::from_slice(buf)?;
+    if !valid_iso_ts(&req.transaction.requested_at) {
+        return Err(ParseError::BadTimestamp);
+    }
+    if let Some(lt) = &req.last_transaction {
+        if !valid_iso_ts(&lt.timestamp) {
+            return Err(ParseError::BadTimestamp);
+        }
+    }
+    Ok(req)
+}
+
+fn valid_iso_ts(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() < 19 {
+        return false;
+    }
+    b[4] == b'-'
+        && b[7] == b'-'
+        && (b[10] == b'T' || b[10] == b' ')
+        && b[13] == b':'
+        && b[16] == b':'
+        && b[0..4].iter().all(|&c| c.is_ascii_digit())
+        && b[5..7].iter().all(|&c| c.is_ascii_digit())
+        && b[8..10].iter().all(|&c| c.is_ascii_digit())
+        && b[11..13].iter().all(|&c| c.is_ascii_digit())
+        && b[14..16].iter().all(|&c| c.is_ascii_digit())
+        && b[17..19].iter().all(|&c| c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -99,5 +136,57 @@ mod tests {
     #[test]
     fn rejects_invalid_json() {
         assert!(parse(b"{not valid json}").is_err());
+    }
+
+    #[test]
+    fn rejects_short_requested_at() {
+        let raw = br#"{
+            "id": "tx-1",
+            "transaction": { "amount": 1.0, "installments": 1, "requested_at": "2026-01-01" },
+            "customer": { "avg_amount": 1.0, "tx_count_24h": 1, "known_merchants": [] },
+            "merchant": { "id": "x", "mcc": "5411", "avg_amount": 1.0 },
+            "terminal": { "is_online": false, "card_present": true, "km_from_home": 0.0 },
+            "last_transaction": null
+        }"#;
+        assert!(parse(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_non_digit_requested_at() {
+        let raw = br#"{
+            "id": "tx-1",
+            "transaction": { "amount": 1.0, "installments": 1, "requested_at": "abcd-01-01T00:00:00Z" },
+            "customer": { "avg_amount": 1.0, "tx_count_24h": 1, "known_merchants": [] },
+            "merchant": { "id": "x", "mcc": "5411", "avg_amount": 1.0 },
+            "terminal": { "is_online": false, "card_present": true, "km_from_home": 0.0 },
+            "last_transaction": null
+        }"#;
+        assert!(parse(raw).is_err());
+    }
+
+    #[test]
+    fn rejects_short_last_tx_timestamp() {
+        let raw = br#"{
+            "id": "tx-1",
+            "transaction": { "amount": 1.0, "installments": 1, "requested_at": "2026-01-01T00:00:00Z" },
+            "customer": { "avg_amount": 1.0, "tx_count_24h": 1, "known_merchants": [] },
+            "merchant": { "id": "x", "mcc": "5411", "avg_amount": 1.0 },
+            "terminal": { "is_online": false, "card_present": true, "km_from_home": 0.0 },
+            "last_transaction": { "timestamp": "bad", "km_from_current": 0.0 }
+        }"#;
+        assert!(parse(raw).is_err());
+    }
+
+    #[test]
+    fn accepts_space_separator_timestamp() {
+        let raw = br#"{
+            "id": "tx-1",
+            "transaction": { "amount": 1.0, "installments": 1, "requested_at": "2026-01-01 00:00:00Z" },
+            "customer": { "avg_amount": 1.0, "tx_count_24h": 1, "known_merchants": [] },
+            "merchant": { "id": "x", "mcc": "5411", "avg_amount": 1.0 },
+            "terminal": { "is_online": false, "card_present": true, "km_from_home": 0.0 },
+            "last_transaction": null
+        }"#;
+        assert!(parse(raw).is_ok());
     }
 }
