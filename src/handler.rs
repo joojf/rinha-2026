@@ -43,7 +43,7 @@ async fn handle_fraud_score(body: Payload) -> Response {
     let ds = DATASET.get().unwrap();
 
     let q = vectorize::vectorize(&req, norm, mcc);
-    let fraud_count = search::knn5_fraud_count(&q, ds);
+    let fraud_count = search::knn5_fraud_count_blocks(&q, ds);
     response::ok_fraud_score(fraud_count)
 }
 

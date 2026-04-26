@@ -5,6 +5,7 @@ use std::io::Read;
 
 pub struct Dataset {
     pub dims: [AVec<f32, ConstAlign<32>>; 14],
+    pub blocks: AVec<f32, ConstAlign<32>>,
     pub labels: Vec<u8>,
     pub len: usize,
     pub padded_len: usize,
@@ -44,7 +45,18 @@ impl Dataset {
             labels.push(0);
         }
 
-        Ok(Dataset { dims, labels, len, padded_len })
+        let n_blocks = padded_len / 8;
+        let mut blocks: AVec<f32, ConstAlign<32>> = AVec::with_capacity(32, n_blocks * 112);
+        for block_i in 0..n_blocks {
+            let base = block_i * 8;
+            for d in 0..14 {
+                for k in 0..8 {
+                    blocks.push(dims[d][base + k]);
+                }
+            }
+        }
+
+        Ok(Dataset { dims, blocks, labels, len, padded_len })
     }
 }
 

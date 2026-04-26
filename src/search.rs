@@ -88,6 +88,66 @@ fn compute_distances_scalar(query: &[f32; 14], ds: &Dataset, dist: &mut [f32]) {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+pub fn knn5_fraud_count_blocks(query: &[f32; 14], ds: &Dataset) -> u8 {
+    unsafe { knn5_blocks_avx2(query, ds) }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn knn5_fraud_count_blocks(query: &[f32; 14], ds: &Dataset) -> u8 {
+    knn5_fraud_count(query, ds)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
+    let mut q_vecs = [_mm256_setzero_ps(); 14];
+    for d in 0..14 {
+        q_vecs[d] = _mm256_set1_ps(query[d]);
+    }
+
+    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let mut worst_idx = 0usize;
+
+    let n_blocks = ds.padded_len / 8;
+    let blocks_ptr = ds.blocks.as_ptr();
+    let labels_ptr = ds.labels.as_ptr();
+
+    for block_i in 0..n_blocks {
+        let block_base = block_i * 112;
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+        for d in (0..14).step_by(2) {
+            let v0 = _mm256_load_ps(blocks_ptr.add(block_base + d * 8));
+            let v1 = _mm256_load_ps(blocks_ptr.add(block_base + (d + 1) * 8));
+            let diff0 = _mm256_sub_ps(v0, q_vecs[d]);
+            let diff1 = _mm256_sub_ps(v1, q_vecs[d + 1]);
+            acc0 = _mm256_fmadd_ps(diff0, diff0, acc0);
+            acc1 = _mm256_fmadd_ps(diff1, diff1, acc1);
+        }
+        let acc = _mm256_add_ps(acc0, acc1);
+        let mut dists = [0.0f32; 8];
+        _mm256_storeu_ps(dists.as_mut_ptr(), acc);
+        let label_base = block_i * 8;
+        for k in 0..8 {
+            let di = dists[k];
+            if di < top[worst_idx].0 {
+                top[worst_idx] = (di, *labels_ptr.add(label_base + k));
+                let mut wi = 0;
+                let mut wv = top[0].0;
+                for j in 1..5 {
+                    if top[j].0 > wv {
+                        wv = top[j].0;
+                        wi = j;
+                    }
+                }
+                worst_idx = wi;
+            }
+        }
+    }
+    top.iter().filter(|(_, l)| *l == 1).count() as u8
+}
+
 fn select_top5(dist: &[f32], labels: &[u8]) -> u8 {
     let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
     let mut worst_idx = 0usize;
@@ -134,7 +194,17 @@ mod tests {
         while labels.len() < padded_len {
             labels.push(0);
         }
-        Dataset { dims, labels, len, padded_len }
+        let n_blocks = padded_len / 8;
+        let mut blocks: AVec<f32, ConstAlign<32>> = AVec::with_capacity(32, n_blocks * 112);
+        for block_i in 0..n_blocks {
+            let base = block_i * 8;
+            for d in 0..14 {
+                for k in 0..8 {
+                    blocks.push(dims[d][base + k]);
+                }
+            }
+        }
+        Dataset { dims, blocks, labels, len, padded_len }
     }
 
     #[test]
@@ -208,6 +278,21 @@ mod tests {
         let _ = knn5_fraud_count(&q2, &ds);
         let a3 = knn5_fraud_count(&q1, &ds);
         assert_eq!(a1, a3);
+    }
+
+    #[test]
+    fn blocks_iguala_soa_no_real() {
+        let ds = Dataset::load_embedded().unwrap();
+        let queries: [[f32; 14]; 3] = [
+            [0.0; 14],
+            [0.5; 14],
+            [0.3, 0.5, 0.1, 0.7, 0.2, 0.4, 0.6, 0.05, 0.9, 1.0, 0.0, 0.0, 0.5, 0.1],
+        ];
+        for q in &queries {
+            let soa = knn5_fraud_count(q, &ds);
+            let blk = knn5_fraud_count_blocks(q, &ds);
+            assert_eq!(soa, blk, "blocks != soa for query {:?}", q);
+        }
     }
 
     #[test]
