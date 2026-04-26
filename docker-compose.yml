@@ -10,11 +10,10 @@ services:
       - backend
     security_opt:
       - seccomp=unconfined
-    cpu_period: "10000"
-    cpu_quota: "4500"
     deploy:
       resources:
         limits:
+          cpus: "0.45"
           memory: 165MB
     ulimits:
       nofile:
@@ -32,11 +31,10 @@ services:
       - backend
     security_opt:
       - seccomp=unconfined
-    cpu_period: "10000"
-    cpu_quota: "4500"
     deploy:
       resources:
         limits:
+          cpus: "0.45"
           memory: 165MB
     ulimits:
       nofile:
@@ -55,11 +53,10 @@ services:
       - api2
     networks:
       - backend
-    cpu_period: "10000"
-    cpu_quota: "1000"
     deploy:
       resources:
         limits:
+          cpus: "0.10"
           memory: 20MB
     ulimits:
       nofile:
