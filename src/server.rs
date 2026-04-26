@@ -1,6 +1,6 @@
 use monoio::{
-    io::{sink::SinkExt, stream::Stream, Splitable},
-    net::{TcpListener, TcpStream},
+    io::{sink::SinkExt, stream::Stream, AsyncReadRent, AsyncWriteRent, Split, Splitable},
+    net::{TcpListener, UnixListener},
 };
 use monoio_http::{
     common::{error::HttpError, request::Request},
@@ -10,10 +10,10 @@ use monoio_http::{
 
 use crate::handler::handle_request;
 
-pub async fn accept_loop(listener: TcpListener) {
+pub async fn accept_loop_tcp(listener: TcpListener) {
     loop {
         match listener.accept().await {
-            Ok((stream, _addr)) => {
+            Ok((stream, _)) => {
                 monoio::spawn(handle_connection(stream));
             }
             Err(_) => {}
@@ -21,7 +21,21 @@ pub async fn accept_loop(listener: TcpListener) {
     }
 }
 
-async fn handle_connection(stream: TcpStream) {
+pub async fn accept_loop_uds(listener: UnixListener) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                monoio::spawn(handle_connection(stream));
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+async fn handle_connection<T>(stream: T)
+where
+    T: Split + AsyncReadRent + AsyncWriteRent + 'static,
+{
     let (r, w) = stream.into_split();
     let encoder = GenericEncoder::new(w);
     let mut decoder = RequestDecoder::new(r);

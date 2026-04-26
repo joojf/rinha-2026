@@ -13,10 +13,8 @@ RUN touch src/main.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release
 
 
-FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12:nonroot AS runtime
+FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12 AS runtime
 
 COPY --from=builder /build/target/release/rinha-2026 /app
-
-EXPOSE 8080
 
 ENTRYPOINT ["/app"]

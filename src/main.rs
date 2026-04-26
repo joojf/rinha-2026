@@ -1,6 +1,7 @@
 use mimalloc::MiMalloc;
 use monoio::{net::TcpListener, IoUringDriver};
 use std::sync::{OnceLock, atomic::{AtomicBool, Ordering}};
+use std::os::unix::fs::PermissionsExt;
 
 mod dataset;
 mod handler;
@@ -25,12 +26,27 @@ fn main() {
     MCC.set(mcc_risk::MccRisk::load_embedded()).ok();
     DATASET.set(dataset::Dataset::load_embedded().expect("falha ao carregar dataset")).ok();
 
-    monoio::start::<IoUringDriver, _>(async {
+    let uds_path = std::env::var("LISTEN_UDS").ok();
+    let tcp_addr = std::env::var("LISTEN_TCP").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+
+    monoio::start::<IoUringDriver, _>(async move {
         warm_up();
         READY.store(true, Ordering::Release);
 
-        let listener = TcpListener::bind("0.0.0.0:8080").expect("bind failed");
-        server::accept_loop(listener).await;
+        if let Some(path) = uds_path {
+            std::fs::remove_file(&path).ok();
+            let opts = monoio::net::ListenerOpts::new()
+                .reuse_port(false)
+                .reuse_addr(false);
+            let listener = monoio::net::UnixListener::bind_with_config(&path, &opts)
+                .expect("unix bind failed");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
+                .expect("chmod socket failed");
+            server::accept_loop_uds(listener).await;
+        } else {
+            let listener = TcpListener::bind(&tcp_addr).expect("tcp bind failed");
+            server::accept_loop_tcp(listener).await;
+        }
     });
 }
 
