@@ -1,98 +1,76 @@
 use aligned_vec::{AVec, ConstAlign};
 use flate2::read::GzDecoder;
-use serde::de::{Deserializer, SeqAccess, Visitor};
-use serde::Deserialize;
-use std::fmt;
+use std::io::Read;
 
 pub struct Dataset {
-    pub blocks: AVec<f32, ConstAlign<32>>,
+    pub centroids: AVec<f32, ConstAlign<32>>,
+    pub offsets: Vec<u32>,
     pub labels: Vec<u8>,
-    pub len: usize,
-    pub padded_len: usize,
+    pub blocks: AVec<f32, ConstAlign<32>>,
+    pub k: usize,
+    pub n: usize,
+    pub padded_n: usize,
 }
 
 impl Dataset {
     pub fn load_embedded() -> Result<Self, Box<dyn std::error::Error>> {
-        let compressed = include_bytes!("../spec/resources/references.json.gz");
-        let gz = GzDecoder::new(&compressed[..]);
-        let mut de = serde_json::Deserializer::from_reader(gz);
-        let ds = de.deserialize_seq(DatasetVisitor::new())?;
-        Ok(ds)
+        let compressed = include_bytes!("../data/index.bin.gz");
+        let mut gz = GzDecoder::new(&compressed[..]);
+
+        let mut magic = [0u8; 4];
+        gz.read_exact(&mut magic)?;
+        if &magic != b"IVF1" {
+            return Err("bad magic".into());
+        }
+
+        let n = read_u32(&mut gz)? as usize;
+        let k = read_u32(&mut gz)? as usize;
+        let d = read_u32(&mut gz)? as usize;
+        if d != 14 {
+            return Err("expected d=14".into());
+        }
+
+        let centroids = read_f32_avec(&mut gz, d * k)?;
+
+        let mut offsets = vec![0u32; k + 1];
+        for o in offsets.iter_mut() {
+            *o = read_u32(&mut gz)?;
+        }
+
+        let total_blocks = offsets[k] as usize;
+        let padded_n = total_blocks * 8;
+
+        let mut labels = vec![0u8; padded_n];
+        gz.read_exact(&mut labels)?;
+
+        let blocks = read_f32_avec(&mut gz, total_blocks * 112)?;
+
+        Ok(Dataset { centroids, offsets, labels, blocks, k, n, padded_n })
     }
 }
 
-struct DatasetVisitor {
-    blocks: AVec<f32, ConstAlign<32>>,
-    labels: Vec<u8>,
-    len: usize,
-    row_buf: [[f32; 14]; 8],
-    label_buf: [u8; 8],
-    buf_idx: usize,
+fn read_u32<R: Read>(r: &mut R) -> std::io::Result<u32> {
+    let mut b = [0u8; 4];
+    r.read_exact(&mut b)?;
+    Ok(u32::from_le_bytes(b))
 }
 
-impl DatasetVisitor {
-    fn new() -> Self {
-        DatasetVisitor {
-            blocks: AVec::with_capacity(32, 1_000_008 / 8 * 112),
-            labels: Vec::with_capacity(1_000_008),
-            len: 0,
-            row_buf: [[0.0; 14]; 8],
-            label_buf: [0; 8],
-            buf_idx: 0,
+fn read_f32_avec<R: Read>(
+    r: &mut R,
+    count: usize,
+) -> std::io::Result<AVec<f32, ConstAlign<32>>> {
+    let mut v: AVec<f32, ConstAlign<32>> = AVec::with_capacity(32, count);
+    let mut buf = [0u8; 32768];
+    let mut remaining = count;
+    while remaining > 0 {
+        let to_read = (remaining * 4).min(buf.len());
+        r.read_exact(&mut buf[..to_read])?;
+        for chunk in buf[..to_read].chunks_exact(4) {
+            v.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
+        remaining -= to_read / 4;
     }
-
-    fn flush_block(&mut self) {
-        for d in 0..14 {
-            for k in 0..8 {
-                self.blocks.push(self.row_buf[k][d]);
-            }
-        }
-        for k in 0..8 {
-            self.labels.push(self.label_buf[k]);
-        }
-        self.buf_idx = 0;
-    }
-}
-
-impl<'de> Visitor<'de> for DatasetVisitor {
-    type Value = Dataset;
-
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "array of reference entries")
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(mut self, mut seq: A) -> Result<Dataset, A::Error> {
-        while let Some(entry) = seq.next_element::<RefEntry>()? {
-            self.row_buf[self.buf_idx] = entry.vector;
-            self.label_buf[self.buf_idx] = if entry.label == "fraud" { 1 } else { 0 };
-            self.buf_idx += 1;
-            self.len += 1;
-
-            if self.buf_idx == 8 {
-                self.flush_block();
-            }
-        }
-
-        if self.buf_idx > 0 {
-            for k in self.buf_idx..8 {
-                self.row_buf[k] = [f32::INFINITY; 14];
-                self.label_buf[k] = 0;
-            }
-            self.flush_block();
-        }
-
-        let len = self.len;
-        let padded_len = len.next_multiple_of(8);
-
-        Ok(Dataset { blocks: self.blocks, labels: self.labels, len, padded_len })
-    }
-}
-
-#[derive(Deserialize)]
-struct RefEntry {
-    vector: [f32; 14],
-    label: String,
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -102,16 +80,18 @@ mod tests {
     #[test]
     fn carrega_entradas() {
         let ds = Dataset::load_embedded().unwrap();
-        assert!(ds.len > 0);
-        assert_eq!(ds.padded_len % 8, 0);
-        assert_eq!(ds.labels.len(), ds.padded_len);
-        assert_eq!(ds.blocks.len(), ds.padded_len / 8 * 112);
+        assert!(ds.n > 0);
+        assert_eq!(ds.padded_n % 8, 0);
+        assert_eq!(ds.labels.len(), ds.padded_n);
+        assert_eq!(ds.blocks.len(), ds.padded_n / 8 * 112);
+        assert_eq!(ds.centroids.len(), ds.k * 14);
+        assert_eq!(ds.offsets.len(), ds.k + 1);
     }
 
     #[test]
     fn alinhamento_32_bytes() {
         let ds = Dataset::load_embedded().unwrap();
-        let ptr = ds.blocks.as_ptr() as usize;
-        assert_eq!(ptr % 32, 0, "blocks não alinhados a 32 bytes");
+        assert_eq!(ds.blocks.as_ptr() as usize % 32, 0);
+        assert_eq!(ds.centroids.as_ptr() as usize % 32, 0);
     }
 }

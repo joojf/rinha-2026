@@ -25,6 +25,10 @@ panic = "abort"
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 
+[[bin]]
+name = "build_index"
+path = "src/bin/build_index.rs"
+
 [[bench]]
 name = "score"
 harness = false

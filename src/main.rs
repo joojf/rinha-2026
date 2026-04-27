@@ -43,14 +43,14 @@ fn warm_up() {
 
     let start = Instant::now();
     let mut state = 0x12345678u32;
-    for _ in 0..10 {
+    for _ in 0..50 {
         let mut q = [0.0f32; 14];
         for v in q.iter_mut() {
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             *v = (state >> 8) as f32 / (1u32 << 24) as f32;
         }
-        let _ = search::knn5_fraud_count_blocks(&q, ds);
+        let _ = search::knn5_fraud_count_ivf(&q, ds);
     }
     let elapsed = start.elapsed();
-    eprintln!("warm-up: {:?} (10 buscas)", elapsed);
+    eprintln!("warm-up: {:?} (50 buscas)", elapsed);
 }

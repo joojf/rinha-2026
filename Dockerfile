@@ -10,7 +10,7 @@ RUN mkdir src benches && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release && \
     rm -rf src benches
 
-COPY spec/resources ./spec/resources
+COPY data ./data
 COPY src ./src
 RUN mkdir -p benches && echo 'fn main(){}' > benches/score.rs && \
     touch src/lib.rs src/main.rs && \
