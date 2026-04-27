@@ -3,8 +3,9 @@ FROM --platform=linux/amd64 rust:1.95-slim AS builder
 WORKDIR /build
 
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src benches && \
+RUN mkdir -p src/bin benches && \
     echo 'fn main(){}' > src/main.rs && \
+    echo 'fn main(){}' > src/bin/build_index.rs && \
     touch src/lib.rs && \
     echo 'fn main(){}' > benches/score.rs && \
     RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release && \
