@@ -3,7 +3,8 @@ use crate::dataset::Dataset;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-const NPROBE: usize = 32;
+const FAST_NPROBE: usize = 24;
+const SAFE_NPROBE: usize = 32;
 
 pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
     #[cfg(target_arch = "x86_64")]
@@ -16,13 +17,22 @@ pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn knn5_ivf_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let probes = top_nprobe_centroids_avx2(query, ds);
+    let fast = unsafe { knn5_ivf_avx2_n::<FAST_NPROBE>(query, ds) };
+    if (1..=4).contains(&fast) {
+        unsafe { knn5_ivf_avx2_n::<SAFE_NPROBE>(query, ds) }
+    } else {
+        fast
+    }
+}
 
-    let mut q_vecs = [unsafe { _mm256_setzero_ps() }; 14];
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn knn5_ivf_avx2_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
+    let probes = unsafe { top_nprobe_centroids_avx2::<NPROBE>(query, ds) };
+
+    let mut q_vecs = [_mm256_setzero_ps(); 14];
     for d in 0..14usize {
-        unsafe {
-            q_vecs[d] = _mm256_set1_ps(query[d]);
-        }
+        q_vecs[d] = _mm256_set1_ps(query[d]);
     }
 
     let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
@@ -52,14 +62,17 @@ unsafe fn knn5_ivf_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn top_nprobe_centroids_avx2(query: &[f32; 14], ds: &Dataset) -> [usize; NPROBE] {
+unsafe fn top_nprobe_centroids_avx2<const NPROBE: usize>(
+    query: &[f32; 14],
+    ds: &Dataset,
+) -> [usize; NPROBE] {
     let k = ds.k;
     let centroids_ptr = ds.centroids.as_ptr();
 
     let mut dists = [0.0f32; 1024];
 
     for d in 0..14usize {
-        let qd = unsafe { _mm256_set1_ps(query[d]) };
+        let qd = _mm256_set1_ps(query[d]);
         let base = d * k;
         let mut ci = 0usize;
         while ci + 8 <= k {
@@ -124,8 +137,8 @@ unsafe fn scan_blocks_avx2(
             }
         }
         let block_base = block_i * 112;
-        let mut acc0 = unsafe { _mm256_setzero_ps() };
-        let mut acc1 = unsafe { _mm256_setzero_ps() };
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
         for d in (0..14usize).step_by(2) {
             unsafe {
                 let v0 = _mm256_load_ps(blocks_ptr.add(block_base + d * 8));
@@ -136,7 +149,7 @@ unsafe fn scan_blocks_avx2(
                 acc1 = _mm256_fmadd_ps(diff1, diff1, acc1);
             }
         }
-        let acc = unsafe { _mm256_add_ps(acc0, acc1) };
+        let acc = _mm256_add_ps(acc0, acc1);
         let mut dists = [0.0f32; 8];
         unsafe { _mm256_storeu_ps(dists.as_mut_ptr(), acc) };
         let label_base = block_i * 8;
@@ -158,7 +171,18 @@ unsafe fn scan_blocks_avx2(
     }
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn knn5_ivf_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
+    let fast = knn5_ivf_scalar_n::<FAST_NPROBE>(query, ds);
+    if (1..=4).contains(&fast) {
+        knn5_ivf_scalar_n::<SAFE_NPROBE>(query, ds)
+    } else {
+        fast
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
     let k = ds.k;
     let mut dists = vec![0.0f32; k];
     for d in 0..14usize {
@@ -237,11 +261,9 @@ pub fn knn5_fraud_count_blocks(query: &[f32; 14], ds: &Dataset) -> u8 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let mut q_vecs = [unsafe { _mm256_setzero_ps() }; 14];
+    let mut q_vecs = [_mm256_setzero_ps(); 14];
     for d in 0..14usize {
-        unsafe {
-            q_vecs[d] = _mm256_set1_ps(query[d]);
-        }
+        q_vecs[d] = _mm256_set1_ps(query[d]);
     }
 
     let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
@@ -265,6 +287,7 @@ unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
     top.iter().filter(|(_, l)| *l == 1).count() as u8
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
     let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
     let mut worst_idx = 0usize;

@@ -1,4 +1,6 @@
 target/
+.codex
+.codex/
 *.log
 .DS_Store
 node_modules/

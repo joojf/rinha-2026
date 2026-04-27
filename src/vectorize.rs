@@ -4,7 +4,7 @@ use crate::{
     payload::FraudRequest,
 };
 
-pub fn vectorize(req: &FraudRequest, norm: &Normalization, mcc: &MccRisk) -> [f32; 14] {
+pub fn vectorize(req: &FraudRequest<'_>, norm: &Normalization, mcc: &MccRisk) -> [f32; 14] {
     let ts = req.transaction.requested_at.as_bytes();
     let hour = parse_u8_2(&ts[11..13]);
     let y = parse_u16_4(&ts[0..4]);
@@ -28,7 +28,7 @@ pub fn vectorize(req: &FraudRequest, norm: &Normalization, mcc: &MccRisk) -> [f3
         .customer
         .known_merchants
         .iter()
-        .any(|k| k == &req.merchant.id);
+        .any(|k| *k == req.merchant.id);
 
     [
         clamp01(req.transaction.amount as f32 / norm.max_amount),
@@ -37,8 +37,8 @@ pub fn vectorize(req: &FraudRequest, norm: &Normalization, mcc: &MccRisk) -> [f3
             (req.transaction.amount as f32 / req.customer.avg_amount as f32)
                 / norm.amount_vs_avg_ratio,
         ),
-        hour as f32 / 23.0,
-        weekday_mon0(y as u32, m as u32, d as u32) as f32 / 6.0,
+        round4(hour as f32 / 23.0),
+        round4(weekday_mon0(y as u32, m as u32, d as u32) as f32 / 6.0),
         dim5,
         dim6,
         clamp01(req.terminal.km_from_home as f32 / norm.max_km),
@@ -53,7 +53,12 @@ pub fn vectorize(req: &FraudRequest, norm: &Normalization, mcc: &MccRisk) -> [f3
 
 #[inline]
 fn clamp01(x: f32) -> f32 {
-    x.clamp(0.0, 1.0)
+    round4(x.clamp(0.0, 1.0))
+}
+
+#[inline]
+fn round4(x: f32) -> f32 {
+    (x * 10000.0).round() * 0.0001
 }
 
 fn weekday_mon0(y: u32, m: u32, d: u32) -> u8 {
@@ -103,22 +108,21 @@ mod tests {
         MccRisk::load_embedded()
     }
 
-    fn req_legit() -> FraudRequest {
+    fn req_legit() -> FraudRequest<'static> {
         FraudRequest {
-            id: "tx-1329056812".into(),
             transaction: Transaction {
                 amount: 41.12,
                 installments: 2,
-                requested_at: "2026-03-11T18:45:53Z".into(),
+                requested_at: "2026-03-11T18:45:53Z",
             },
             customer: Customer {
                 avg_amount: 82.24,
                 tx_count_24h: 3,
-                known_merchants: vec!["MERC-003".into(), "MERC-016".into()],
+                known_merchants: vec!["MERC-003", "MERC-016"],
             },
             merchant: Merchant {
-                id: "MERC-016".into(),
-                mcc: "5411".into(),
+                id: "MERC-016",
+                mcc: "5411",
                 avg_amount: 60.25,
             },
             terminal: Terminal {
@@ -130,26 +134,25 @@ mod tests {
         }
     }
 
-    fn req_fraud() -> FraudRequest {
+    fn req_fraud() -> FraudRequest<'static> {
         FraudRequest {
-            id: "tx-3330991687".into(),
             transaction: Transaction {
                 amount: 9505.97,
                 installments: 10,
-                requested_at: "2026-03-14T05:15:12Z".into(),
+                requested_at: "2026-03-14T05:15:12Z",
             },
             customer: Customer {
                 avg_amount: 81.28,
                 tx_count_24h: 20,
                 known_merchants: vec![
-                    "MERC-008".into(),
-                    "MERC-007".into(),
-                    "MERC-005".into(),
+                    "MERC-008",
+                    "MERC-007",
+                    "MERC-005",
                 ],
             },
             merchant: Merchant {
-                id: "MERC-068".into(),
-                mcc: "7802".into(),
+                id: "MERC-068",
+                mcc: "7802",
                 avg_amount: 54.86,
             },
             terminal: Terminal {
@@ -186,6 +189,42 @@ mod tests {
     }
 
     #[test]
+    fn edge_case_rounds_to_reference_precision() {
+        let req = FraudRequest {
+            transaction: Transaction {
+                amount: 1187.67,
+                installments: 6,
+                requested_at: "2026-03-18T13:53:03Z",
+            },
+            customer: Customer {
+                avg_amount: 360.36,
+                tx_count_24h: 5,
+                known_merchants: vec!["MERC-003", "MERC-002"],
+            },
+            merchant: Merchant {
+                id: "MERC-030",
+                mcc: "5944",
+                avg_amount: 269.09,
+            },
+            terminal: Terminal {
+                is_online: true,
+                card_present: false,
+                km_from_home: 390.2943426395,
+            },
+            last_transaction: Some(crate::payload::LastTransaction {
+                timestamp: "2026-03-18T12:18:03Z",
+                km_from_current: 158.1653734525,
+            }),
+        };
+        let expected = [0.1188, 0.5, 0.3296, 0.5652, 0.3333, 0.066,
+                        0.1582, 0.3903, 0.25, 1.0, 0.0, 1.0, 0.45, 0.0269];
+        let got = vectorize(&req, &norm(), &mcc());
+        for (i, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
+            assert!(near(*g, *e), "dim {i}: got {g}, expected {e}");
+        }
+    }
+
+    #[test]
     fn dim0_amount_clamp() {
         let mut r = req_legit();
         r.transaction.amount = 0.0;
@@ -214,22 +253,22 @@ mod tests {
     #[test]
     fn dim3_hour() {
         let mut r = req_legit();
-        r.transaction.requested_at = "2026-01-01T00:00:00Z".into();
+        r.transaction.requested_at = "2026-01-01T00:00:00Z";
         assert_eq!(vectorize(&r, &norm(), &mcc())[3], 0.0);
-        r.transaction.requested_at = "2026-01-01T23:00:00Z".into();
+        r.transaction.requested_at = "2026-01-01T23:00:00Z";
         assert!(near(vectorize(&r, &norm(), &mcc())[3], 1.0));
     }
 
     #[test]
     fn dim4_weekday() {
         let mut r = req_legit();
-        r.transaction.requested_at = "2026-03-09T10:00:00Z".into();
+        r.transaction.requested_at = "2026-03-09T10:00:00Z";
         assert_eq!(vectorize(&r, &norm(), &mcc())[4], 0.0);
-        r.transaction.requested_at = "2026-03-15T10:00:00Z".into();
+        r.transaction.requested_at = "2026-03-15T10:00:00Z";
         assert!(near(vectorize(&r, &norm(), &mcc())[4], 1.0));
-        r.transaction.requested_at = "2026-03-11T18:45:53Z".into();
+        r.transaction.requested_at = "2026-03-11T18:45:53Z";
         assert!(near(vectorize(&r, &norm(), &mcc())[4], 2.0 / 6.0));
-        r.transaction.requested_at = "2026-03-14T05:15:12Z".into();
+        r.transaction.requested_at = "2026-03-14T05:15:12Z";
         assert!(near(vectorize(&r, &norm(), &mcc())[4], 5.0 / 6.0));
     }
 
@@ -242,19 +281,19 @@ mod tests {
     #[test]
     fn dim5_minutes_clamped() {
         let mut r = req_legit();
-        r.transaction.requested_at = "2026-03-11T18:45:53Z".into();
+        r.transaction.requested_at = "2026-03-11T18:45:53Z";
         r.last_transaction = Some(crate::payload::LastTransaction {
-            timestamp: "2026-03-11T18:45:53Z".into(),
+            timestamp: "2026-03-11T18:45:53Z",
             km_from_current: 0.0,
         });
         assert_eq!(vectorize(&r, &norm(), &mcc())[5], 0.0);
         r.last_transaction = Some(crate::payload::LastTransaction {
-            timestamp: "2026-03-10T18:45:53Z".into(),
+            timestamp: "2026-03-10T18:45:53Z",
             km_from_current: 0.0,
         });
         assert!(near(vectorize(&r, &norm(), &mcc())[5], 1.0));
         r.last_transaction = Some(crate::payload::LastTransaction {
-            timestamp: "2026-03-01T00:00:00Z".into(),
+            timestamp: "2026-03-01T00:00:00Z",
             km_from_current: 0.0,
         });
         assert_eq!(vectorize(&r, &norm(), &mcc())[5], 1.0);
@@ -270,12 +309,12 @@ mod tests {
     fn dim6_km_last_clamp() {
         let mut r = req_legit();
         r.last_transaction = Some(crate::payload::LastTransaction {
-            timestamp: "2026-03-11T10:00:00Z".into(),
+            timestamp: "2026-03-11T10:00:00Z",
             km_from_current: 500.0,
         });
         assert!(near(vectorize(&r, &norm(), &mcc())[6], 0.5));
         r.last_transaction = Some(crate::payload::LastTransaction {
-            timestamp: "2026-03-11T10:00:00Z".into(),
+            timestamp: "2026-03-11T10:00:00Z",
             km_from_current: 9999.0,
         });
         assert_eq!(vectorize(&r, &norm(), &mcc())[6], 1.0);
@@ -321,16 +360,16 @@ mod tests {
     fn dim11_unknown_merchant() {
         let mut r = req_legit();
         assert_eq!(vectorize(&r, &norm(), &mcc())[11], 0.0);
-        r.merchant.id = "MERC-999".into();
+        r.merchant.id = "MERC-999";
         assert_eq!(vectorize(&r, &norm(), &mcc())[11], 1.0);
     }
 
     #[test]
     fn dim12_mcc_risk() {
         let mut r = req_legit();
-        r.merchant.mcc = "7995".into();
+        r.merchant.mcc = "7995";
         assert!(near(vectorize(&r, &norm(), &mcc())[12], 0.85));
-        r.merchant.mcc = "9999".into();
+        r.merchant.mcc = "9999";
         assert!(near(vectorize(&r, &norm(), &mcc())[12], 0.5));
     }
 

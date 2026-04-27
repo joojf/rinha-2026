@@ -7,23 +7,18 @@ use std::sync::atomic::Ordering;
 use crate::{payload, response, search, vectorize, DATASET, MCC, NORM, READY};
 
 pub async fn handle_request(req: http::Request<Payload>) -> Response {
-    let method = req.method().clone();
-    let path = req.uri().path().to_owned();
-
-    match (method, path.as_str()) {
-        (Method::GET, "/ready") => {
-            drain_body(req.into_body()).await;
-            if READY.load(Ordering::Acquire) {
-                response::ok_ready()
-            } else {
-                response::not_ready()
-            }
+    if req.method() == Method::GET && req.uri().path() == "/ready" {
+        drain_body(req.into_body()).await;
+        if READY.load(Ordering::Acquire) {
+            response::ok_ready()
+        } else {
+            response::not_ready()
         }
-        (Method::POST, "/fraud-score") => handle_fraud_score(req.into_body()).await,
-        _ => {
-            drain_body(req.into_body()).await;
-            response::not_found()
-        }
+    } else if req.method() == Method::POST && req.uri().path() == "/fraud-score" {
+        handle_fraud_score(req.into_body()).await
+    } else {
+        drain_body(req.into_body()).await;
+        response::not_found()
     }
 }
 

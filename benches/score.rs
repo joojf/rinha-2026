@@ -5,7 +5,7 @@ use rinha_2026::{
     mcc_risk::MccRisk,
     normalization::Normalization,
     payload,
-    search::{knn5_fraud_count, knn5_fraud_count_blocks},
+    search::{knn5_fraud_count_blocks, knn5_fraud_count_ivf},
     vectorize::vectorize,
 };
 
@@ -38,8 +38,8 @@ fn bench_search(c: &mut Criterion) {
     let ds = Dataset::load_embedded().unwrap();
     let q = [0.3f32, 0.5, 0.1, 0.7, 0.2, 0.4, 0.6, 0.05, 0.9, 1.0, 0.0, 0.0, 0.5, 0.1];
 
-    c.bench_function("knn5_search", |b| {
-        b.iter(|| knn5_fraud_count(black_box(&q), &ds))
+    c.bench_function("knn5_ivf", |b| {
+        b.iter(|| knn5_fraud_count_ivf(black_box(&q), &ds))
     });
 
     c.bench_function("knn5_blocks", |b| {
@@ -56,7 +56,7 @@ fn bench_end_to_end(c: &mut Criterion) {
         b.iter(|| {
             let req = payload::parse(black_box(SAMPLE)).unwrap();
             let q = vectorize(&req, &norm, &mcc);
-            knn5_fraud_count_blocks(&q, &ds)
+            knn5_fraud_count_ivf(&q, &ds)
         })
     });
 }

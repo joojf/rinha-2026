@@ -1,32 +1,23 @@
-use std::collections::HashMap;
-
-pub struct MccRisk(HashMap<[u8; 4], f32>);
+pub struct MccRisk;
 
 impl MccRisk {
     pub fn load_embedded() -> Self {
-        let bytes = include_bytes!("../spec/resources/mcc_risk.json");
-        let raw: HashMap<String, f32> =
-            sonic_rs::from_slice(bytes).expect("mcc_risk.json inválido");
-        let map = raw
-            .into_iter()
-            .filter_map(|(k, v)| {
-                let b = k.as_bytes();
-                if b.len() == 4 {
-                    Some(([b[0], b[1], b[2], b[3]], v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        MccRisk(map)
+        MccRisk
     }
 
     pub fn lookup(&self, mcc: &str) -> f32 {
-        let b = mcc.as_bytes();
-        if b.len() == 4 {
-            *self.0.get(&[b[0], b[1], b[2], b[3]]).unwrap_or(&0.5)
-        } else {
-            0.5
+        match mcc.as_bytes() {
+            b"5411" => 0.15,
+            b"5812" => 0.30,
+            b"5912" => 0.20,
+            b"5944" => 0.45,
+            b"7801" => 0.80,
+            b"7802" => 0.75,
+            b"7995" => 0.85,
+            b"4511" => 0.35,
+            b"5311" => 0.25,
+            b"5999" => 0.50,
+            _ => 0.5,
         }
     }
 }

@@ -1,23 +1,27 @@
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub struct Transaction {
+pub struct Transaction<'a> {
     pub amount: f64,
     pub installments: u32,
-    pub requested_at: String,
+    #[serde(borrow)]
+    pub requested_at: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Customer {
+pub struct Customer<'a> {
     pub avg_amount: f64,
     pub tx_count_24h: u32,
-    pub known_merchants: Vec<String>,
+    #[serde(borrow)]
+    pub known_merchants: Vec<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Merchant {
-    pub id: String,
-    pub mcc: String,
+pub struct Merchant<'a> {
+    #[serde(borrow)]
+    pub id: &'a str,
+    #[serde(borrow)]
+    pub mcc: &'a str,
     pub avg_amount: f64,
 }
 
@@ -29,19 +33,23 @@ pub struct Terminal {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LastTransaction {
-    pub timestamp: String,
+pub struct LastTransaction<'a> {
+    #[serde(borrow)]
+    pub timestamp: &'a str,
     pub km_from_current: f64,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct FraudRequest {
-    pub id: String,
-    pub transaction: Transaction,
-    pub customer: Customer,
-    pub merchant: Merchant,
+pub struct FraudRequest<'a> {
+    #[serde(borrow)]
+    pub transaction: Transaction<'a>,
+    #[serde(borrow)]
+    pub customer: Customer<'a>,
+    #[serde(borrow)]
+    pub merchant: Merchant<'a>,
     pub terminal: Terminal,
-    pub last_transaction: Option<LastTransaction>,
+    #[serde(borrow)]
+    pub last_transaction: Option<LastTransaction<'a>>,
 }
 
 #[derive(Debug)]
@@ -56,8 +64,8 @@ impl From<sonic_rs::Error> for ParseError {
     }
 }
 
-pub fn parse(buf: &[u8]) -> Result<FraudRequest, ParseError> {
-    let req: FraudRequest = sonic_rs::from_slice(buf)?;
+pub fn parse(buf: &[u8]) -> Result<FraudRequest<'_>, ParseError> {
+    let req: FraudRequest<'_> = sonic_rs::from_slice(buf)?;
     if !valid_iso_ts(&req.transaction.requested_at) {
         return Err(ParseError::BadTimestamp);
     }
@@ -102,7 +110,6 @@ mod tests {
             "last_transaction": { "timestamp": "2026-03-11T14:58:35Z", "km_from_current": 18.862 }
         }"#;
         let req = parse(raw).unwrap();
-        assert_eq!(req.id, "tx-3576980410");
         assert!((req.transaction.amount - 384.88).abs() < 1e-9);
         assert_eq!(req.transaction.installments, 3);
         assert_eq!(req.customer.tx_count_24h, 3);
@@ -123,7 +130,6 @@ mod tests {
             "last_transaction": null
         }"#;
         let req = parse(raw).unwrap();
-        assert_eq!(req.id, "tx-1329056812");
         assert!(req.last_transaction.is_none());
     }
 

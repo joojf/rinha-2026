@@ -47,8 +47,17 @@ popd >/dev/null
 
 echo ""
 echo "==> resultado:"
-jq '.' spec/test/results.json
+if command -v jq >/dev/null 2>&1; then
+    jq '.' spec/test/results.json
+else
+    python3 -m json.tool spec/test/results.json
+fi
 
 echo ""
-echo "==> final_score: $(jq '.scoring.final_score' spec/test/results.json)"
+if command -v jq >/dev/null 2>&1; then
+    FINAL_SCORE="$(jq '.scoring.final_score' spec/test/results.json)"
+else
+    FINAL_SCORE="$(python3 -c 'import json; print(json.load(open("spec/test/results.json"))["scoring"]["final_score"])')"
+fi
+echo "==> final_score: $FINAL_SCORE"
 echo "==> docker stats salvo em docker-stats.log"
