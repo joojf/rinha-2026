@@ -971,6 +971,7 @@ dependencies = [
  "monoio",
  "monoio-http",
  "serde",
+ "serde_json",
  "sonic-rs",
 ]
 

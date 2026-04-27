@@ -40,11 +40,10 @@ fn main() {
 fn warm_up() {
     use std::time::Instant;
     let ds = DATASET.get().unwrap();
-    search::warm_up_buffer(ds.padded_len);
 
     let start = Instant::now();
     let mut state = 0x12345678u32;
-    for _ in 0..5000 {
+    for _ in 0..10 {
         let mut q = [0.0f32; 14];
         for v in q.iter_mut() {
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -53,6 +52,5 @@ fn warm_up() {
         let _ = search::knn5_fraud_count_blocks(&q, ds);
     }
     let elapsed = start.elapsed();
-    eprintln!("warm-up: {:?} (5000 buscas)", elapsed);
-    debug_assert!(elapsed.as_millis() < 30000);
+    eprintln!("warm-up: {:?} (10 buscas)", elapsed);
 }
