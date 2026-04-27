@@ -114,6 +114,11 @@ unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
     let labels_ptr = ds.labels.as_ptr();
 
     for block_i in 0..n_blocks {
+        let prefetch_base = (block_i + 8) * 112;
+        if prefetch_base + 112 <= n_blocks * 112 {
+            _mm_prefetch(blocks_ptr.add(prefetch_base) as *const i8, _MM_HINT_T0);
+            _mm_prefetch(blocks_ptr.add(prefetch_base + 56) as *const i8, _MM_HINT_T0);
+        }
         let block_base = block_i * 112;
         let mut acc0 = _mm256_setzero_ps();
         let mut acc1 = _mm256_setzero_ps();
