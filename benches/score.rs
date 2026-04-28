@@ -1,5 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use rinha_2026::{
+    calibration::calibrate_fraud_count,
     dataset::Dataset,
     mcc_risk::MccRisk,
     normalization::Normalization,
@@ -58,7 +59,7 @@ fn bench_end_to_end(c: &mut Criterion) {
         b.iter(|| {
             let req = payload::parse(black_box(SAMPLE)).unwrap();
             let q = vectorize(&req, &norm, &mcc);
-            knn5_fraud_count_ivf(&q, &ds)
+            calibrate_fraud_count(knn5_fraud_count_ivf(&q, &ds), &q)
         })
     });
 }
