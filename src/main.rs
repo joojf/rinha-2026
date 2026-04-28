@@ -1,17 +1,15 @@
+use monoio::{IoUringDriver, net::TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
-use monoio::{net::TcpListener, IoUringDriver};
 
-use rinha_2026::{
-    dataset, mcc_risk, normalization,
-    search, server,
-    DATASET, MCC, NORM, READY,
-};
+use rinha_2026::{DATASET, MCC, NORM, READY, dataset, mcc_risk, normalization, search, server};
 
 fn main() {
     NORM.set(normalization::Normalization::load_embedded()).ok();
     MCC.set(mcc_risk::MccRisk::load_embedded()).ok();
-    DATASET.set(dataset::Dataset::load_embedded().expect("falha ao carregar dataset")).ok();
+    DATASET
+        .set(dataset::Dataset::load_embedded().expect("falha ao carregar dataset"))
+        .ok();
 
     let uds_path = std::env::var("LISTEN_UDS").ok();
     let tcp_addr = std::env::var("LISTEN_TCP").unwrap_or_else(|_| "0.0.0.0:8080".to_string());

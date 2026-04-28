@@ -1,8 +1,5 @@
 use mimalloc::MiMalloc;
-use std::sync::{
-    OnceLock,
-    atomic::AtomicBool,
-};
+use std::sync::{OnceLock, atomic::AtomicBool};
 
 pub mod dataset;
 pub mod handler;

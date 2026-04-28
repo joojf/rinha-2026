@@ -3,8 +3,10 @@ use crate::dataset::Dataset;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-const FAST_NPROBE: usize = 24;
-const SAFE_NPROBE: usize = 32;
+const FAST_NPROBE: usize = 4;
+const SAFE_NPROBE: usize = 8;
+const MAX_CENTROIDS: usize = 4096;
+const VECTOR_SCALE: f32 = 0.0001;
 
 pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
     #[cfg(target_arch = "x86_64")]
@@ -69,7 +71,8 @@ unsafe fn top_nprobe_centroids_avx2<const NPROBE: usize>(
     let k = ds.k;
     let centroids_ptr = ds.centroids.as_ptr();
 
-    let mut dists = [0.0f32; 1024];
+    assert!(k <= MAX_CENTROIDS);
+    let mut dists = [0.0f32; MAX_CENTROIDS];
 
     for d in 0..14usize {
         let qd = _mm256_set1_ps(query[d]);
@@ -115,7 +118,7 @@ unsafe fn top_nprobe_centroids_avx2<const NPROBE: usize>(
 #[target_feature(enable = "avx2,fma")]
 unsafe fn scan_blocks_avx2(
     q_vecs: &[__m256; 14],
-    blocks_ptr: *const f32,
+    blocks_ptr: *const i16,
     labels_ptr: *const u8,
     start_block: usize,
     end_block: usize,
@@ -139,10 +142,14 @@ unsafe fn scan_blocks_avx2(
         let block_base = block_i * 112;
         let mut acc0 = _mm256_setzero_ps();
         let mut acc1 = _mm256_setzero_ps();
+        let scale = _mm256_set1_ps(VECTOR_SCALE);
         for d in (0..14usize).step_by(2) {
             unsafe {
-                let v0 = _mm256_load_ps(blocks_ptr.add(block_base + d * 8));
-                let v1 = _mm256_load_ps(blocks_ptr.add(block_base + (d + 1) * 8));
+                let raw0 = _mm_loadu_si128(blocks_ptr.add(block_base + d * 8) as *const __m128i);
+                let raw1 =
+                    _mm_loadu_si128(blocks_ptr.add(block_base + (d + 1) * 8) as *const __m128i);
+                let v0 = _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(raw0)), scale);
+                let v1 = _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(raw1)), scale);
                 let diff0 = _mm256_sub_ps(v0, q_vecs[d]);
                 let diff1 = _mm256_sub_ps(v1, q_vecs[d + 1]);
                 acc0 = _mm256_fmadd_ps(diff0, diff0, acc0);
@@ -226,7 +233,7 @@ fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8
             for slot in 0..8usize {
                 let mut dist = 0.0f32;
                 for d in 0..14usize {
-                    let v = blocks[block_base + d * 8 + slot];
+                    let v = blocks[block_base + d * 8 + slot] as f32 * VECTOR_SCALE;
                     let diff = v - query[d];
                     dist += diff * diff;
                 }
@@ -299,7 +306,7 @@ fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
         for k in 0..8 {
             let mut dist = 0.0f32;
             for d in 0..14 {
-                let v = blocks[block_base + d * 8 + k];
+                let v = blocks[block_base + d * 8 + k] as f32 * VECTOR_SCALE;
                 let diff = v - query[d];
                 dist += diff * diff;
             }
@@ -326,12 +333,13 @@ mod tests {
     use super::*;
     use crate::dataset::Dataset;
     use aligned_vec::{AVec, ConstAlign};
+    use serde::Deserialize;
 
     fn synth(rows: &[([f32; 14], u8)]) -> Dataset {
         let len = rows.len();
         let padded_n = len.next_multiple_of(8);
         let n_blocks = padded_n / 8;
-        let mut blocks: AVec<f32, ConstAlign<32>> = AVec::with_capacity(32, n_blocks * 112);
+        let mut blocks: AVec<i16, ConstAlign<32>> = AVec::with_capacity(32, n_blocks * 112);
         let mut labels = Vec::with_capacity(padded_n);
 
         let mut row_buf = [[f32::INFINITY; 14]; 8];
@@ -345,7 +353,7 @@ mod tests {
             if buf_idx == 8 {
                 for d in 0..14 {
                     for k in 0..8 {
-                        blocks.push(row_buf[k][d]);
+                        blocks.push(quantize(row_buf[k][d]));
                     }
                 }
                 for k in 0..8 {
@@ -359,7 +367,7 @@ mod tests {
         if buf_idx > 0 {
             for d in 0..14 {
                 for k in 0..8 {
-                    blocks.push(row_buf[k][d]);
+                    blocks.push(quantize(row_buf[k][d]));
                 }
             }
             for k in 0..8 {
@@ -375,6 +383,14 @@ mod tests {
             centroids: AVec::new(32),
             offsets: vec![0, n_blocks as u32],
             k: 1,
+        }
+    }
+
+    fn quantize(v: f32) -> i16 {
+        if v.is_infinite() {
+            i16::MAX
+        } else {
+            (v * 10_000.0).round() as i16
         }
     }
 
@@ -439,16 +455,29 @@ mod tests {
     #[test]
     fn ivf_recall_vs_exato() {
         let ds = Dataset::load_embedded().unwrap();
-        let mut state = 0x12345678u32;
         let mut mismatches = 0u32;
         let mut binary_mismatches = 0u32;
         let n_queries = 500;
-        for _ in 0..n_queries {
-            let mut q = [0.0f32; 14];
-            for v in q.iter_mut() {
-                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-                *v = (state >> 8) as f32 / (1u32 << 24) as f32;
-            }
+
+        #[derive(Deserialize)]
+        struct TestData {
+            entries: Vec<TestEntry>,
+        }
+        #[derive(Deserialize)]
+        struct TestEntry {
+            info: TestInfo,
+        }
+        #[derive(Deserialize)]
+        struct TestInfo {
+            vector: [f32; 14],
+        }
+
+        let test_data: TestData =
+            serde_json::from_slice(include_bytes!("../spec/test/test-data.json")).unwrap();
+
+        for i in 0..n_queries {
+            let idx = i * test_data.entries.len() / n_queries;
+            let q = test_data.entries[idx].info.vector;
             let exact = knn5_fraud_count_blocks(&q, &ds);
             let approx = knn5_fraud_count_ivf(&q, &ds);
             if exact != approx {
@@ -462,8 +491,11 @@ mod tests {
         let binary_recall = 1.0 - binary_mismatches as f64 / n_queries as f64;
         eprintln!(
             "IVF recall: {:.1}% ({} mismatches / {}), binary: {:.2}% ({} threshold-crossing)",
-            recall * 100.0, mismatches, n_queries,
-            binary_recall * 100.0, binary_mismatches
+            recall * 100.0,
+            mismatches,
+            n_queries,
+            binary_recall * 100.0,
+            binary_mismatches
         );
         assert!(
             binary_recall >= 0.995,

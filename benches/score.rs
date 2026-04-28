@@ -1,5 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use std::hint::black_box;
+use criterion::{Criterion, criterion_group, criterion_main};
 use rinha_2026::{
     dataset::Dataset,
     mcc_risk::MccRisk,
@@ -8,6 +7,7 @@ use rinha_2026::{
     search::{knn5_fraud_count_blocks, knn5_fraud_count_ivf},
     vectorize::vectorize,
 };
+use std::hint::black_box;
 
 static SAMPLE: &[u8] = br#"{
     "id": "tx-bench-001",
@@ -36,7 +36,9 @@ fn bench_vectorize(c: &mut Criterion) {
 
 fn bench_search(c: &mut Criterion) {
     let ds = Dataset::load_embedded().unwrap();
-    let q = [0.3f32, 0.5, 0.1, 0.7, 0.2, 0.4, 0.6, 0.05, 0.9, 1.0, 0.0, 0.0, 0.5, 0.1];
+    let q = [
+        0.3f32, 0.5, 0.1, 0.7, 0.2, 0.4, 0.6, 0.05, 0.9, 1.0, 0.0, 0.0, 0.5, 0.1,
+    ];
 
     c.bench_function("knn5_ivf", |b| {
         b.iter(|| knn5_fraud_count_ivf(black_box(&q), &ds))
@@ -61,5 +63,11 @@ fn bench_end_to_end(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_parse, bench_vectorize, bench_search, bench_end_to_end);
+criterion_group!(
+    benches,
+    bench_parse,
+    bench_vectorize,
+    bench_search,
+    bench_end_to_end
+);
 criterion_main!(benches);

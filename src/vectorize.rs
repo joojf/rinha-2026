@@ -1,8 +1,4 @@
-use crate::{
-    mcc_risk::MccRisk,
-    normalization::Normalization,
-    payload::FraudRequest,
-};
+use crate::{mcc_risk::MccRisk, normalization::Normalization, payload::FraudRequest};
 
 pub fn vectorize(req: &FraudRequest<'_>, norm: &Normalization, mcc: &MccRisk) -> [f32; 14] {
     let ts = req.transaction.requested_at.as_bytes();
@@ -144,11 +140,7 @@ mod tests {
             customer: Customer {
                 avg_amount: 81.28,
                 tx_count_24h: 20,
-                known_merchants: vec![
-                    "MERC-008",
-                    "MERC-007",
-                    "MERC-005",
-                ],
+                known_merchants: vec!["MERC-008", "MERC-007", "MERC-005"],
             },
             merchant: Merchant {
                 id: "MERC-068",
@@ -170,8 +162,10 @@ mod tests {
 
     #[test]
     fn spec_example_legit() {
-        let expected = [0.0041, 0.1667, 0.05, 0.7826, 0.3333, -1.0, -1.0,
-                        0.0292, 0.15, 0.0, 1.0, 0.0, 0.15, 0.006];
+        let expected = [
+            0.0041, 0.1667, 0.05, 0.7826, 0.3333, -1.0, -1.0, 0.0292, 0.15, 0.0, 1.0, 0.0, 0.15,
+            0.006,
+        ];
         let got = vectorize(&req_legit(), &norm(), &mcc());
         for (i, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
             assert!(near(*g, *e), "dim {i}: got {g}, expected {e}");
@@ -180,8 +174,10 @@ mod tests {
 
     #[test]
     fn spec_example_fraud() {
-        let expected = [0.9506, 0.8333, 1.0, 0.2174, 0.8333, -1.0, -1.0,
-                        0.9523, 1.0, 0.0, 1.0, 1.0, 0.75, 0.0055];
+        let expected = [
+            0.9506, 0.8333, 1.0, 0.2174, 0.8333, -1.0, -1.0, 0.9523, 1.0, 0.0, 1.0, 1.0, 0.75,
+            0.0055,
+        ];
         let got = vectorize(&req_fraud(), &norm(), &mcc());
         for (i, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
             assert!(near(*g, *e), "dim {i}: got {g}, expected {e}");
@@ -216,8 +212,10 @@ mod tests {
                 km_from_current: 158.1653734525,
             }),
         };
-        let expected = [0.1188, 0.5, 0.3296, 0.5652, 0.3333, 0.066,
-                        0.1582, 0.3903, 0.25, 1.0, 0.0, 1.0, 0.45, 0.0269];
+        let expected = [
+            0.1188, 0.5, 0.3296, 0.5652, 0.3333, 0.066, 0.1582, 0.3903, 0.25, 1.0, 0.0, 1.0, 0.45,
+            0.0269,
+        ];
         let got = vectorize(&req, &norm(), &mcc());
         for (i, (g, e)) in got.iter().zip(expected.iter()).enumerate() {
             assert!(near(*g, *e), "dim {i}: got {g}, expected {e}");

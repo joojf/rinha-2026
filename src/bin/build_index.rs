@@ -1,14 +1,14 @@
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
-use serde::de::{Deserializer as _, SeqAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{Deserializer as _, SeqAccess, Visitor};
 use std::fmt;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::time::Instant;
 
-const K: usize = 1024;
+const K: usize = 4096;
 const D: usize = 14;
 const N_ITER: usize = 25;
 
@@ -50,8 +50,7 @@ fn main() {
 }
 
 fn load_dataset() -> (Vec<[f32; D]>, Vec<u8>) {
-    let file =
-        File::open("spec/resources/references.json.gz").expect("run from project root");
+    let file = File::open("spec/resources/references.json.gz").expect("run from project root");
     let gz = GzDecoder::new(std::io::BufReader::new(file));
     let mut de = serde_json::Deserializer::from_reader(gz);
 
@@ -81,8 +80,8 @@ fn load_dataset() -> (Vec<[f32; D]>, Vec<u8>) {
     }
 
     de.deserialize_seq(V {
-        vecs: Vec::with_capacity(1_100_000),
-        lbls: Vec::with_capacity(1_100_000),
+        vecs: Vec::with_capacity(3_100_000),
+        lbls: Vec::with_capacity(3_100_000),
     })
     .expect("json parse error")
 }
@@ -165,11 +164,7 @@ fn nearest_centroid(v: &[f32; D], centroids: &[[f32; D]]) -> u16 {
     best_idx
 }
 
-fn assign_parallel(
-    vectors: &[[f32; D]],
-    centroids: &[[f32; D]],
-    assignments: &mut [u16],
-) -> usize {
+fn assign_parallel(vectors: &[[f32; D]], centroids: &[[f32; D]], assignments: &mut [u16]) -> usize {
     let n_threads = std::thread::available_parallelism()
         .map(|x| x.get())
         .unwrap_or(4)
@@ -197,11 +192,7 @@ fn assign_parallel(
     total_changed.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn update_centroids(
-    vectors: &[[f32; D]],
-    assignments: &[u16],
-    centroids: &mut [[f32; D]],
-) {
+fn update_centroids(vectors: &[[f32; D]], assignments: &[u16], centroids: &mut [[f32; D]]) {
     let k = centroids.len();
     let mut sums = vec![[0.0f64; D]; k];
     let mut counts = vec![0u32; k];
@@ -245,7 +236,7 @@ fn write_index(
     let padded_n = total_blocks * 8;
 
     let mut out_labels = vec![0u8; padded_n];
-    let mut out_blocks = vec![0.0f32; total_blocks * 112];
+    let mut out_blocks = vec![0i16; total_blocks * 112];
 
     for ci in 0..k {
         let block_start = block_offsets[ci] as usize;
@@ -256,14 +247,19 @@ fn write_index(
             let block_base = (block_start + bk) * 112;
             let label_base = (block_start + bk) * 8;
             for slot in 0..8 {
-                let (v, lbl) = match vecs.get(bk * 8 + slot) {
-                    Some(&vi) => (&vectors[vi], labels[vi]),
-                    None => (&[f32::INFINITY; D], 0u8),
-                };
-                for d in 0..D {
-                    out_blocks[block_base + d * 8 + slot] = v[d];
+                match vecs.get(bk * 8 + slot) {
+                    Some(&vi) => {
+                        for d in 0..D {
+                            out_blocks[block_base + d * 8 + slot] = quantize(vectors[vi][d]);
+                        }
+                        out_labels[label_base + slot] = labels[vi];
+                    }
+                    None => {
+                        for d in 0..D {
+                            out_blocks[block_base + d * 8 + slot] = i16::MAX;
+                        }
+                    }
                 }
-                out_labels[label_base + slot] = lbl;
             }
         }
     }
@@ -288,7 +284,7 @@ fn write_index(
         write_u32(&mut w, o);
     }
     w.write_all(&out_labels).unwrap();
-    write_f32s(&mut w, &out_blocks);
+    write_i16s(&mut w, &out_blocks);
     w.flush().unwrap();
 
     let meta = std::fs::metadata(path).unwrap();
@@ -305,7 +301,15 @@ fn write_u32<W: Write>(w: &mut W, v: u32) {
 }
 
 fn write_f32s<W: Write>(w: &mut W, data: &[f32]) {
-    let bytes =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
     w.write_all(bytes).unwrap();
+}
+
+fn write_i16s<W: Write>(w: &mut W, data: &[i16]) {
+    let bytes = unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 2) };
+    w.write_all(bytes).unwrap();
+}
+
+fn quantize(v: f32) -> i16 {
+    (v * 10_000.0).round() as i16
 }

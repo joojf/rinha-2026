@@ -6,7 +6,7 @@ pub struct Dataset {
     pub centroids: AVec<f32, ConstAlign<32>>,
     pub offsets: Vec<u32>,
     pub labels: Vec<u8>,
-    pub blocks: AVec<f32, ConstAlign<32>>,
+    pub blocks: AVec<i16, ConstAlign<32>>,
     pub k: usize,
     pub n: usize,
     pub padded_n: usize,
@@ -43,9 +43,17 @@ impl Dataset {
         let mut labels = vec![0u8; padded_n];
         gz.read_exact(&mut labels)?;
 
-        let blocks = read_f32_avec(&mut gz, total_blocks * 112)?;
+        let blocks = read_i16_avec(&mut gz, total_blocks * 112)?;
 
-        Ok(Dataset { centroids, offsets, labels, blocks, k, n, padded_n })
+        Ok(Dataset {
+            centroids,
+            offsets,
+            labels,
+            blocks,
+            k,
+            n,
+            padded_n,
+        })
     }
 }
 
@@ -55,10 +63,7 @@ fn read_u32<R: Read>(r: &mut R) -> std::io::Result<u32> {
     Ok(u32::from_le_bytes(b))
 }
 
-fn read_f32_avec<R: Read>(
-    r: &mut R,
-    count: usize,
-) -> std::io::Result<AVec<f32, ConstAlign<32>>> {
+fn read_f32_avec<R: Read>(r: &mut R, count: usize) -> std::io::Result<AVec<f32, ConstAlign<32>>> {
     let mut v: AVec<f32, ConstAlign<32>> = AVec::with_capacity(32, count);
     let mut buf = [0u8; 32768];
     let mut remaining = count;
@@ -69,6 +74,21 @@ fn read_f32_avec<R: Read>(
             v.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
         remaining -= to_read / 4;
+    }
+    Ok(v)
+}
+
+fn read_i16_avec<R: Read>(r: &mut R, count: usize) -> std::io::Result<AVec<i16, ConstAlign<32>>> {
+    let mut v: AVec<i16, ConstAlign<32>> = AVec::with_capacity(32, count);
+    let mut buf = [0u8; 32768];
+    let mut remaining = count;
+    while remaining > 0 {
+        let to_read = (remaining * 2).min(buf.len());
+        r.read_exact(&mut buf[..to_read])?;
+        for chunk in buf[..to_read].chunks_exact(2) {
+            v.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+        }
+        remaining -= to_read / 2;
     }
     Ok(v)
 }

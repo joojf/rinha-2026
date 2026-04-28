@@ -1,11 +1,11 @@
 use monoio::{
-    io::{sink::SinkExt, stream::Stream, AsyncReadRent, AsyncWriteRent, Split, Splitable},
+    io::{AsyncReadRent, AsyncWriteRent, Split, Splitable, sink::SinkExt, stream::Stream},
     net::{TcpListener, UnixListener},
 };
 use monoio_http::{
     common::{error::HttpError, request::Request},
     h1::codec::{decoder::RequestDecoder, encoder::GenericEncoder},
-    util::spsc::{spsc_pair, SPSCReceiver},
+    util::spsc::{SPSCReceiver, spsc_pair},
 };
 
 use crate::handler::handle_request;

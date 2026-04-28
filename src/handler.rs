@@ -4,7 +4,7 @@ use monoio::io::stream::Stream;
 use monoio_http::{common::response::Response, h1::payload::Payload};
 use std::sync::atomic::Ordering;
 
-use crate::{payload, response, search, vectorize, DATASET, MCC, NORM, READY};
+use crate::{DATASET, MCC, NORM, READY, payload, response, search, vectorize};
 
 pub async fn handle_request(req: http::Request<Payload>) -> Response {
     if req.method() == Method::GET && req.uri().path() == "/ready" {

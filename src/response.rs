@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use http::{response::Builder, StatusCode};
+use http::{StatusCode, response::Builder};
 use monoio_http::{
     common::response::Response,
     h1::payload::{FixedPayload, Payload},
@@ -66,13 +66,17 @@ mod tests {
     fn score_boundary_approved_vs_rejected() {
         for c in 0u8..3 {
             assert!(
-                std::str::from_utf8(BODIES[c as usize]).unwrap().contains("true"),
+                std::str::from_utf8(BODIES[c as usize])
+                    .unwrap()
+                    .contains("true"),
                 "fraud_count={c} deve ser approved"
             );
         }
         for c in 3u8..=5 {
             assert!(
-                std::str::from_utf8(BODIES[c as usize]).unwrap().contains("false"),
+                std::str::from_utf8(BODIES[c as usize])
+                    .unwrap()
+                    .contains("false"),
                 "fraud_count={c} deve ser rejected"
             );
         }
