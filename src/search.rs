@@ -19,18 +19,7 @@ pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn knn5_ivf_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let fast = unsafe { knn5_ivf_avx2_n::<FAST_NPROBE>(query, ds) };
-    if (1..=4).contains(&fast) {
-        unsafe { knn5_ivf_avx2_n::<SAFE_NPROBE>(query, ds) }
-    } else {
-        fast
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-unsafe fn knn5_ivf_avx2_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let probes = unsafe { top_nprobe_centroids_avx2::<NPROBE>(query, ds) };
+    let probes = unsafe { top_nprobe_centroids_avx2::<SAFE_NPROBE>(query, ds) };
 
     let mut q_vecs = [_mm256_setzero_ps(); 14];
     for d in 0..14usize {
@@ -43,16 +32,27 @@ unsafe fn knn5_ivf_avx2_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) 
     let blocks_ptr = ds.blocks.as_ptr();
     let labels_ptr = ds.labels.as_ptr();
 
-    for &ci in &probes {
-        let start_block = unsafe { *ds.offsets.as_ptr().add(ci) } as usize;
-        let end_block = unsafe { *ds.offsets.as_ptr().add(ci + 1) } as usize;
+    unsafe {
+        scan_probes_avx2(
+            &probes[..FAST_NPROBE],
+            ds,
+            &q_vecs,
+            blocks_ptr,
+            labels_ptr,
+            &mut top,
+            &mut worst_idx,
+        );
+    }
+
+    let fast = top.iter().filter(|(_, l)| *l == 1).count() as u8;
+    if (1..=4).contains(&fast) {
         unsafe {
-            scan_blocks_avx2(
+            scan_probes_avx2(
+                &probes[FAST_NPROBE..],
+                ds,
                 &q_vecs,
                 blocks_ptr,
                 labels_ptr,
-                start_block,
-                end_block,
                 &mut top,
                 &mut worst_idx,
             );
@@ -60,6 +60,34 @@ unsafe fn knn5_ivf_avx2_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) 
     }
 
     top.iter().filter(|(_, l)| *l == 1).count() as u8
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn scan_probes_avx2(
+    probes: &[usize],
+    ds: &Dataset,
+    q_vecs: &[__m256; 14],
+    blocks_ptr: *const i16,
+    labels_ptr: *const u8,
+    top: &mut [(f32, u8); 5],
+    worst_idx: &mut usize,
+) {
+    for &ci in probes {
+        let start_block = unsafe { *ds.offsets.as_ptr().add(ci) } as usize;
+        let end_block = unsafe { *ds.offsets.as_ptr().add(ci + 1) } as usize;
+        unsafe {
+            scan_blocks_avx2(
+                q_vecs,
+                blocks_ptr,
+                labels_ptr,
+                start_block,
+                end_block,
+                top,
+                worst_idx,
+            );
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -111,7 +139,22 @@ unsafe fn top_nprobe_centroids_avx2<const NPROBE: usize>(
         }
     }
 
+    sort_probe_results(&mut result, &mut result_dist);
     result
+}
+
+fn sort_probe_results<const NPROBE: usize>(
+    result: &mut [usize; NPROBE],
+    result_dist: &mut [f32; NPROBE],
+) {
+    for i in 1..NPROBE {
+        let mut j = i;
+        while j > 0 && result_dist[j] < result_dist[j - 1] {
+            result_dist.swap(j, j - 1);
+            result.swap(j, j - 1);
+            j -= 1;
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -125,6 +168,7 @@ unsafe fn scan_blocks_avx2(
     top: &mut [(f32, u8); 5],
     worst_idx: &mut usize,
 ) {
+    let scale = _mm256_set1_ps(VECTOR_SCALE);
     for block_i in start_block..end_block {
         let prefetch_block = block_i + 8;
         if prefetch_block < end_block {
@@ -142,7 +186,6 @@ unsafe fn scan_blocks_avx2(
         let block_base = block_i * 112;
         let mut acc0 = _mm256_setzero_ps();
         let mut acc1 = _mm256_setzero_ps();
-        let scale = _mm256_set1_ps(VECTOR_SCALE);
         for d in (0..14usize).step_by(2) {
             unsafe {
                 let raw0 = _mm_loadu_si128(blocks_ptr.add(block_base + d * 8) as *const __m128i);
@@ -180,16 +223,23 @@ unsafe fn scan_blocks_avx2(
 
 #[cfg(not(target_arch = "x86_64"))]
 fn knn5_ivf_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let fast = knn5_ivf_scalar_n::<FAST_NPROBE>(query, ds);
+    let probes = top_nprobe_centroids_scalar::<SAFE_NPROBE>(query, ds);
+    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let mut worst_idx = 0usize;
+
+    scan_probes_scalar(&probes[..FAST_NPROBE], query, ds, &mut top, &mut worst_idx);
+    let fast = top.iter().filter(|(_, l)| *l == 1).count() as u8;
     if (1..=4).contains(&fast) {
-        knn5_ivf_scalar_n::<SAFE_NPROBE>(query, ds)
-    } else {
-        fast
+        scan_probes_scalar(&probes[FAST_NPROBE..], query, ds, &mut top, &mut worst_idx);
     }
+    top.iter().filter(|(_, l)| *l == 1).count() as u8
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
+fn top_nprobe_centroids_scalar<const NPROBE: usize>(
+    query: &[f32; 14],
+    ds: &Dataset,
+) -> [usize; NPROBE] {
     let k = ds.k;
     let mut dists = vec![0.0f32; k];
     for d in 0..14usize {
@@ -220,12 +270,22 @@ fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8
         }
     }
 
-    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
-    let mut worst_idx = 0usize;
+    sort_probe_results(&mut probes, &mut probe_dists);
+    probes
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn scan_probes_scalar(
+    probes: &[usize],
+    query: &[f32; 14],
+    ds: &Dataset,
+    top: &mut [(f32, u8); 5],
+    worst_idx: &mut usize,
+) {
     let blocks = ds.blocks.as_slice();
     let labels = ds.labels.as_slice();
 
-    for &ci in &probes {
+    for &ci in probes {
         let start_block = ds.offsets[ci] as usize;
         let end_block = ds.offsets[ci + 1] as usize;
         for block_i in start_block..end_block {
@@ -238,8 +298,8 @@ fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8
                     dist += diff * diff;
                 }
                 let label = labels[block_i * 8 + slot];
-                if dist < top[worst_idx].0 {
-                    top[worst_idx] = (dist, label);
+                if dist < top[*worst_idx].0 {
+                    top[*worst_idx] = (dist, label);
                     let mut wi = 0;
                     let mut wv = top[0].0;
                     for j in 1..5 {
@@ -248,13 +308,11 @@ fn knn5_ivf_scalar_n<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8
                             wi = j;
                         }
                     }
-                    worst_idx = wi;
+                    *worst_idx = wi;
                 }
             }
         }
     }
-
-    top.iter().filter(|(_, l)| *l == 1).count() as u8
 }
 
 pub fn knn5_fraud_count_blocks(query: &[f32; 14], ds: &Dataset) -> u8 {
