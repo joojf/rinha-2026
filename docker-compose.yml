@@ -10,7 +10,7 @@ services:
     security_opt:
       - seccomp=unconfined
     cpu_period: "10000"
-    cpu_quota: "4000"
+    cpu_quota: "2500"
     deploy:
       resources:
         limits:
@@ -31,7 +31,7 @@ services:
     security_opt:
       - seccomp=unconfined
     cpu_period: "10000"
-    cpu_quota: "4000"
+    cpu_quota: "2500"
     deploy:
       resources:
         limits:
@@ -54,7 +54,7 @@ services:
     networks:
       - backend
     cpu_period: "10000"
-    cpu_quota: "2000"
+    cpu_quota: "5000"
     deploy:
       resources:
         limits:

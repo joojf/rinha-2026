@@ -13,13 +13,15 @@ const BODIES: [&[u8]; 6] = [
     br#"{"approved":false,"fraud_score":0.8}"#,
     br#"{"approved":false,"fraud_score":1.0}"#,
 ];
+const BODY_LENS: [&str; 6] = ["35", "35", "35", "36", "36", "36"];
 
 pub fn ok_fraud_score(fraud_count: u8) -> Response {
-    let body = BODIES[fraud_count.min(5) as usize];
+    let idx = fraud_count.min(5) as usize;
+    let body = BODIES[idx];
     Builder::new()
         .status(StatusCode::OK)
         .header("content-type", "application/json")
-        .header("content-length", body.len().to_string())
+        .header("content-length", BODY_LENS[idx])
         .body(Payload::Fixed(FixedPayload::new(Bytes::from_static(body))))
         .unwrap()
 }
@@ -60,6 +62,9 @@ mod tests {
         assert_eq!(BODIES[3], br#"{"approved":false,"fraud_score":0.6}"#);
         assert_eq!(BODIES[4], br#"{"approved":false,"fraud_score":0.8}"#);
         assert_eq!(BODIES[5], br#"{"approved":false,"fraud_score":1.0}"#);
+        for i in 0..BODIES.len() {
+            assert_eq!(BODY_LENS[i], BODIES[i].len().to_string());
+        }
     }
 
     #[test]
