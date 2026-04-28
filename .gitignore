@@ -1,3 +1,5 @@
 spec/
 target/
 docker-stats.log
+.codex
+.codex/
