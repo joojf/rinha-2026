@@ -184,10 +184,19 @@ unsafe fn scan_blocks_avx2(
             }
         }
         let acc = _mm256_add_ps(acc0, acc1);
+        let closer = _mm256_cmp_ps(acc, _mm256_set1_ps(top[*worst_idx].0), _CMP_LT_OQ);
+        let mut mask = _mm256_movemask_ps(closer) as u32;
+        if mask == 0 {
+            continue;
+        }
+
         let mut dists = [0.0f32; 8];
         unsafe { _mm256_storeu_ps(dists.as_mut_ptr(), acc) };
         let label_base = block_i * 8;
-        for slot in 0..8usize {
+        while mask != 0 {
+            let slot = mask.trailing_zeros() as usize;
+            mask &= mask - 1;
+
             let di = dists[slot];
             if di < top[*worst_idx].0 {
                 top[*worst_idx] = (di, unsafe { *labels_ptr.add(label_base + slot) });
