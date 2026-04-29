@@ -9,7 +9,6 @@ services:
       - backend
     security_opt:
       - seccomp=unconfined
-    cpuset: "1"
     deploy:
       resources:
         limits:
@@ -30,7 +29,6 @@ services:
       - backend
     security_opt:
       - seccomp=unconfined
-    cpuset: "3"
     deploy:
       resources:
         limits:
@@ -53,7 +51,6 @@ services:
       - api2
     networks:
       - backend
-    cpuset: "0,2"
     deploy:
       resources:
         limits:

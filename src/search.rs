@@ -3,21 +3,38 @@ use crate::dataset::Dataset;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-const NPROBE: usize = 24;
+const FAST_NPROBE: usize = 16;
+const FULL_NPROBE: usize = 24;
 const MAX_CENTROIDS: usize = 4096;
 const VECTOR_SCALE: f32 = 0.0001;
 
 pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
+    let fast = {
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { knn5_ivf_avx2::<FAST_NPROBE>(query, ds) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            knn5_ivf_scalar::<FAST_NPROBE>(query, ds)
+        }
+    };
+
+    if fast != 2 && fast != 3 {
+        return fast;
+    }
+
     #[cfg(target_arch = "x86_64")]
-    return unsafe { knn5_ivf_avx2(query, ds) };
+    return unsafe { knn5_ivf_avx2::<FULL_NPROBE>(query, ds) };
 
     #[cfg(not(target_arch = "x86_64"))]
-    knn5_ivf_scalar(query, ds)
+    knn5_ivf_scalar::<FULL_NPROBE>(query, ds)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn knn5_ivf_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
+unsafe fn knn5_ivf_avx2<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
     let probes = unsafe { top_nprobe_centroids_avx2::<NPROBE>(query, ds) };
 
     let mut q_vecs = [_mm256_setzero_ps(); 14];
@@ -215,7 +232,7 @@ unsafe fn scan_blocks_avx2(
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn knn5_ivf_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
+fn knn5_ivf_scalar<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
     let probes = top_nprobe_centroids_scalar::<NPROBE>(query, ds);
     let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
     let mut worst_idx = 0usize;
