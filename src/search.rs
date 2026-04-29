@@ -6,7 +6,7 @@ use std::arch::x86_64::*;
 const FAST_NPROBE: usize = 12;
 const FULL_NPROBE: usize = 24;
 const MAX_CENTROIDS: usize = 4096;
-const VECTOR_SCALE: f32 = 0.0001;
+const VECTOR_INV_SCALE: f32 = 10_000.0;
 
 pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
     let fast = {
@@ -37,12 +37,13 @@ pub fn knn5_fraud_count_ivf(query: &[f32; 14], ds: &Dataset) -> u8 {
 unsafe fn knn5_ivf_avx2<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
     let probes = unsafe { top_nprobe_centroids_avx2::<NPROBE>(query, ds) };
 
-    let mut q_vecs = [_mm256_setzero_ps(); 14];
+    let q = quantize_query(query);
+    let mut q_vecs = [_mm256_setzero_si256(); 14];
     for d in 0..14usize {
-        q_vecs[d] = _mm256_set1_ps(query[d]);
+        q_vecs[d] = _mm256_set1_epi32(q[d] as i32);
     }
 
-    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let mut top: [(i32, u8); 5] = [(i32::MAX, 0); 5];
     let mut worst_idx = 0usize;
 
     let blocks_ptr = ds.blocks.as_ptr();
@@ -68,10 +69,10 @@ unsafe fn knn5_ivf_avx2<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) ->
 unsafe fn scan_probes_avx2(
     probes: &[usize],
     ds: &Dataset,
-    q_vecs: &[__m256; 14],
+    q_vecs: &[__m256i; 14],
     blocks_ptr: *const i16,
     labels_ptr: *const u8,
-    top: &mut [(f32, u8); 5],
+    top: &mut [(i32, u8); 5],
     worst_idx: &mut usize,
 ) {
     for &ci in probes {
@@ -161,15 +162,16 @@ fn sort_probe_results<const NPROBE: usize>(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn scan_blocks_avx2(
-    q_vecs: &[__m256; 14],
+    q_vecs: &[__m256i; 14],
     blocks_ptr: *const i16,
     labels_ptr: *const u8,
     start_block: usize,
     end_block: usize,
-    top: &mut [(f32, u8); 5],
+    top: &mut [(i32, u8); 5],
     worst_idx: &mut usize,
 ) {
-    let scale = _mm256_set1_ps(VECTOR_SCALE);
+    let padding_i16 = _mm_set1_epi16(i16::MAX);
+    let max_dist = _mm256_set1_epi32(i32::MAX);
     for block_i in start_block..end_block {
         let prefetch_block = block_i + 8;
         if prefetch_block < end_block {
@@ -185,30 +187,31 @@ unsafe fn scan_blocks_avx2(
             }
         }
         let block_base = block_i * 112;
-        let mut acc0 = _mm256_setzero_ps();
-        let mut acc1 = _mm256_setzero_ps();
+        let first_dim = unsafe { _mm_loadu_si128(blocks_ptr.add(block_base) as *const __m128i) };
+        let padding_mask = _mm256_cvtepi16_epi32(_mm_cmpeq_epi16(first_dim, padding_i16));
+
+        let mut acc0 = _mm256_setzero_si256();
+        let mut acc1 = _mm256_setzero_si256();
         for d in (0..14usize).step_by(2) {
             unsafe {
                 let raw0 = _mm_loadu_si128(blocks_ptr.add(block_base + d * 8) as *const __m128i);
                 let raw1 =
                     _mm_loadu_si128(blocks_ptr.add(block_base + (d + 1) * 8) as *const __m128i);
-                let v0 = _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(raw0)), scale);
-                let v1 = _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(raw1)), scale);
-                let diff0 = _mm256_sub_ps(v0, q_vecs[d]);
-                let diff1 = _mm256_sub_ps(v1, q_vecs[d + 1]);
-                acc0 = _mm256_fmadd_ps(diff0, diff0, acc0);
-                acc1 = _mm256_fmadd_ps(diff1, diff1, acc1);
+                let diff0 = _mm256_sub_epi32(_mm256_cvtepi16_epi32(raw0), q_vecs[d]);
+                let diff1 = _mm256_sub_epi32(_mm256_cvtepi16_epi32(raw1), q_vecs[d + 1]);
+                acc0 = _mm256_add_epi32(acc0, _mm256_mullo_epi32(diff0, diff0));
+                acc1 = _mm256_add_epi32(acc1, _mm256_mullo_epi32(diff1, diff1));
             }
         }
-        let acc = _mm256_add_ps(acc0, acc1);
-        let closer = _mm256_cmp_ps(acc, _mm256_set1_ps(top[*worst_idx].0), _CMP_LT_OQ);
-        let mut mask = _mm256_movemask_ps(closer) as u32;
+        let acc = _mm256_blendv_epi8(_mm256_add_epi32(acc0, acc1), max_dist, padding_mask);
+        let closer = _mm256_cmpgt_epi32(_mm256_set1_epi32(top[*worst_idx].0), acc);
+        let mut mask = _mm256_movemask_ps(_mm256_castsi256_ps(closer)) as u32;
         if mask == 0 {
             continue;
         }
 
-        let mut dists = [0.0f32; 8];
-        unsafe { _mm256_storeu_ps(dists.as_mut_ptr(), acc) };
+        let mut dists = [0i32; 8];
+        unsafe { _mm256_storeu_si256(dists.as_mut_ptr() as *mut __m256i, acc) };
         let label_base = block_i * 8;
         while mask != 0 {
             let slot = mask.trailing_zeros() as usize;
@@ -234,10 +237,11 @@ unsafe fn scan_blocks_avx2(
 #[cfg(not(target_arch = "x86_64"))]
 fn knn5_ivf_scalar<const NPROBE: usize>(query: &[f32; 14], ds: &Dataset) -> u8 {
     let probes = top_nprobe_centroids_scalar::<NPROBE>(query, ds);
-    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let q = quantize_query(query);
+    let mut top: [(i32, u8); 5] = [(i32::MAX, 0); 5];
     let mut worst_idx = 0usize;
 
-    scan_probes_scalar(&probes, query, ds, &mut top, &mut worst_idx);
+    scan_probes_scalar(&probes, &q, ds, &mut top, &mut worst_idx);
     top.iter().filter(|(_, l)| *l == 1).count() as u8
 }
 
@@ -283,9 +287,9 @@ fn top_nprobe_centroids_scalar<const NPROBE: usize>(
 #[cfg(not(target_arch = "x86_64"))]
 fn scan_probes_scalar(
     probes: &[usize],
-    query: &[f32; 14],
+    query: &[i16; 14],
     ds: &Dataset,
-    top: &mut [(f32, u8); 5],
+    top: &mut [(i32, u8); 5],
     worst_idx: &mut usize,
 ) {
     let blocks = ds.blocks.as_slice();
@@ -297,10 +301,12 @@ fn scan_probes_scalar(
         for block_i in start_block..end_block {
             let block_base = block_i * 112;
             for slot in 0..8usize {
-                let mut dist = 0.0f32;
+                if blocks[block_base + slot] == i16::MAX {
+                    continue;
+                }
+                let mut dist = 0i32;
                 for d in 0..14usize {
-                    let v = blocks[block_base + d * 8 + slot] as f32 * VECTOR_SCALE;
-                    let diff = v - query[d];
+                    let diff = blocks[block_base + d * 8 + slot] as i32 - query[d] as i32;
                     dist += diff * diff;
                 }
                 let label = labels[block_i * 8 + slot];
@@ -332,12 +338,13 @@ pub fn knn5_fraud_count_blocks(query: &[f32; 14], ds: &Dataset) -> u8 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let mut q_vecs = [_mm256_setzero_ps(); 14];
+    let q = quantize_query(query);
+    let mut q_vecs = [_mm256_setzero_si256(); 14];
     for d in 0..14usize {
-        q_vecs[d] = _mm256_set1_ps(query[d]);
+        q_vecs[d] = _mm256_set1_epi32(q[d] as i32);
     }
 
-    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let mut top: [(i32, u8); 5] = [(i32::MAX, 0); 5];
     let mut worst_idx = 0usize;
 
     let n_blocks = ds.padded_n / 8;
@@ -360,7 +367,8 @@ unsafe fn knn5_blocks_avx2(query: &[f32; 14], ds: &Dataset) -> u8 {
 
 #[cfg(not(target_arch = "x86_64"))]
 fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
-    let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+    let q = quantize_query(query);
+    let mut top: [(i32, u8); 5] = [(i32::MAX, 0); 5];
     let mut worst_idx = 0usize;
     let n_blocks = ds.padded_n / 8;
     let blocks = ds.blocks.as_slice();
@@ -368,10 +376,12 @@ fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
     for block_i in 0..n_blocks {
         let block_base = block_i * 112;
         for k in 0..8 {
-            let mut dist = 0.0f32;
+            if blocks[block_base + k] == i16::MAX {
+                continue;
+            }
+            let mut dist = 0i32;
             for d in 0..14 {
-                let v = blocks[block_base + d * 8 + k] as f32 * VECTOR_SCALE;
-                let diff = v - query[d];
+                let diff = blocks[block_base + d * 8 + k] as i32 - q[d] as i32;
                 dist += diff * diff;
             }
             let label = labels[block_i * 8 + k];
@@ -390,6 +400,14 @@ fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
         }
     }
     top.iter().filter(|(_, l)| *l == 1).count() as u8
+}
+
+fn quantize_query(query: &[f32; 14]) -> [i16; 14] {
+    let mut q = [0i16; 14];
+    for d in 0..14 {
+        q[d] = (query[d] * VECTOR_INV_SCALE).round() as i16;
+    }
+    q
 }
 
 #[cfg(test)]
@@ -459,6 +477,39 @@ mod tests {
         }
     }
 
+    fn knn5_blocks_f32_reference(query: &[f32; 14], ds: &Dataset) -> u8 {
+        const SCALE: f32 = 0.0001;
+        let mut top: [(f32, u8); 5] = [(f32::INFINITY, 0); 5];
+        let mut worst_idx = 0usize;
+
+        let n_blocks = ds.padded_n / 8;
+        for block_i in 0..n_blocks {
+            let block_base = block_i * 112;
+            for slot in 0..8 {
+                let mut dist = 0.0f32;
+                for d in 0..14 {
+                    let v = ds.blocks[block_base + d * 8 + slot] as f32 * SCALE;
+                    let diff = v - query[d];
+                    dist += diff * diff;
+                }
+                if dist < top[worst_idx].0 {
+                    top[worst_idx] = (dist, ds.labels[block_i * 8 + slot]);
+                    let mut wi = 0;
+                    let mut wv = top[0].0;
+                    for j in 1..5 {
+                        if top[j].0 > wv {
+                            wv = top[j].0;
+                            wi = j;
+                        }
+                    }
+                    worst_idx = wi;
+                }
+            }
+        }
+
+        top.iter().filter(|(_, l)| *l == 1).count() as u8
+    }
+
     #[test]
     fn top5_todos_fraude() {
         let mut rows = vec![];
@@ -515,6 +566,34 @@ mod tests {
         let ds = Dataset::load_embedded().unwrap();
         let c = knn5_fraud_count_ivf(&[0.0; 14], &ds);
         assert!(c <= 5);
+    }
+
+    #[test]
+    fn distancia_inteira_bate_com_referencia_float() {
+        let ds = Dataset::load_embedded().unwrap();
+        let norm = Normalization::load_embedded();
+        let mcc = MccRisk::load_embedded();
+
+        #[derive(Deserialize)]
+        struct TestData {
+            entries: Vec<TestEntry>,
+        }
+        #[derive(Deserialize)]
+        struct TestEntry {
+            request: serde_json::Value,
+        }
+
+        let test_data: TestData =
+            serde_json::from_slice(include_bytes!("../spec/test/test-data.json")).unwrap();
+        for entry in test_data.entries.iter().take(8) {
+            let raw = serde_json::to_vec(&entry.request).unwrap();
+            let req = payload::parse(&raw).unwrap();
+            let q = vectorize::vectorize(&req, &norm, &mcc);
+            assert_eq!(
+                knn5_fraud_count_blocks(&q, &ds),
+                knn5_blocks_f32_reference(&q, &ds)
+            );
+        }
     }
 
     #[test]
