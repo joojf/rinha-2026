@@ -1,7 +1,6 @@
 use mimalloc::MiMalloc;
 use std::sync::{OnceLock, atomic::AtomicBool};
 
-pub mod calibration;
 pub mod dataset;
 pub mod handler;
 pub mod mcc_risk;

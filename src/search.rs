@@ -3,7 +3,7 @@ use crate::dataset::Dataset;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-const NPROBE: usize = 4;
+const NPROBE: usize = 8;
 const MAX_CENTROIDS: usize = 4096;
 const VECTOR_SCALE: f32 = 0.0001;
 
@@ -370,6 +370,7 @@ fn knn5_blocks_scalar(query: &[f32; 14], ds: &Dataset) -> u8 {
 mod tests {
     use super::*;
     use crate::dataset::Dataset;
+    use crate::{mcc_risk::MccRisk, normalization::Normalization, payload, vectorize};
     use aligned_vec::{AVec, ConstAlign};
     use serde::Deserialize;
 
@@ -495,7 +496,6 @@ mod tests {
         let ds = Dataset::load_embedded().unwrap();
         let mut mismatches = 0u32;
         let mut binary_mismatches = 0u32;
-        let n_queries = 500;
 
         #[derive(Deserialize)]
         struct TestData {
@@ -503,19 +503,19 @@ mod tests {
         }
         #[derive(Deserialize)]
         struct TestEntry {
-            info: TestInfo,
-        }
-        #[derive(Deserialize)]
-        struct TestInfo {
-            vector: [f32; 14],
+            request: serde_json::Value,
         }
 
         let test_data: TestData =
             serde_json::from_slice(include_bytes!("../spec/test/test-data.json")).unwrap();
+        let norm = Normalization::load_embedded();
+        let mcc = MccRisk::load_embedded();
+        let n_queries = test_data.entries.len() as u32;
 
-        for i in 0..n_queries {
-            let idx = i * test_data.entries.len() / n_queries;
-            let q = test_data.entries[idx].info.vector;
+        for entry in &test_data.entries {
+            let raw = serde_json::to_vec(&entry.request).unwrap();
+            let req = payload::parse(&raw).unwrap();
+            let q = vectorize::vectorize(&req, &norm, &mcc);
             let exact = knn5_fraud_count_blocks(&q, &ds);
             let approx = knn5_fraud_count_ivf(&q, &ds);
             if exact != approx {
