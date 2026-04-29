@@ -3,7 +3,7 @@ use crate::dataset::Dataset;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-const FAST_NPROBE: usize = 16;
+const FAST_NPROBE: usize = 12;
 const FULL_NPROBE: usize = 24;
 const MAX_CENTROIDS: usize = 4096;
 const VECTOR_SCALE: f32 = 0.0001;
