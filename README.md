@@ -27,7 +27,7 @@ Dev (sem Docker): `LISTEN_TCP=0.0.0.0:8080 cargo run --release`
 cargo test
 ```
 
-45 testes unitários cobrindo payload parsing, vetorização 14D, busca k-NN, MCC lookup, normalização, dataset e respostas HTTP.
+Testes unitários cobrindo scorer direto, busca k-NN quantizada, dataset e respostas HTTP.
 
 ## Benchmark
 
@@ -35,7 +35,7 @@ cargo test
 cargo bench
 ```
 
-Mede parse, vetorização, busca e pipeline end-to-end. Meta: `score_end_to_end` < 100µs em hardware local.
+Mede scorer direto, busca quantizada e pipeline end-to-end. Meta: `score_body` < 100µs em hardware local.
 
 ## Teste de carga (k6 oficial)
 

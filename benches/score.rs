@@ -1,12 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use rinha_2026::{
-    dataset::Dataset,
-    mcc_risk::MccRisk,
-    normalization::Normalization,
-    payload,
-    search::{knn5_fraud_count_blocks, knn5_fraud_count_ivf},
-    vectorize::vectorize,
-};
+use rinha_2026::{dataset::Dataset, scorer, search::knn5_fraud_count_ivf_i16};
 use std::hint::black_box;
 
 static SAMPLE: &[u8] = br#"{
@@ -18,56 +11,30 @@ static SAMPLE: &[u8] = br#"{
     "last_transaction": { "timestamp": "2026-03-11T14:58:35Z", "km_from_current": 18.862 }
 }"#;
 
-fn bench_parse(c: &mut Criterion) {
-    c.bench_function("payload_parse", |b| {
-        b.iter(|| payload::parse(black_box(SAMPLE)).unwrap())
-    });
-}
-
-fn bench_vectorize(c: &mut Criterion) {
-    let norm = Normalization::load_embedded();
-    let mcc = MccRisk::load_embedded();
-    let req = payload::parse(SAMPLE).unwrap();
-
-    c.bench_function("vectorize", |b| {
-        b.iter(|| vectorize(black_box(&req), &norm, &mcc))
+fn bench_vectorize_body(c: &mut Criterion) {
+    c.bench_function("vectorize_body_i16", |b| {
+        b.iter(|| scorer::vectorize_body_i16(black_box(SAMPLE)).unwrap())
     });
 }
 
 fn bench_search(c: &mut Criterion) {
     let ds = Dataset::load_embedded().unwrap();
     let q = [
-        0.3f32, 0.5, 0.1, 0.7, 0.2, 0.4, 0.6, 0.05, 0.9, 1.0, 0.0, 0.0, 0.5, 0.1,
+        3000i16, 5000, 1000, 7000, 2000, 4000, 6000, 500, 9000, 10000, 0, 0, 5000, 1000,
     ];
 
-    c.bench_function("knn5_ivf", |b| {
-        b.iter(|| knn5_fraud_count_ivf(black_box(&q), &ds))
-    });
-
-    c.bench_function("knn5_blocks", |b| {
-        b.iter(|| knn5_fraud_count_blocks(black_box(&q), &ds))
+    c.bench_function("knn5_ivf_i16", |b| {
+        b.iter(|| knn5_fraud_count_ivf_i16(black_box(&q), &ds))
     });
 }
 
 fn bench_end_to_end(c: &mut Criterion) {
-    let norm = Normalization::load_embedded();
-    let mcc = MccRisk::load_embedded();
     let ds = Dataset::load_embedded().unwrap();
 
-    c.bench_function("score_end_to_end", |b| {
-        b.iter(|| {
-            let req = payload::parse(black_box(SAMPLE)).unwrap();
-            let q = vectorize(&req, &norm, &mcc);
-            knn5_fraud_count_ivf(&q, &ds)
-        })
+    c.bench_function("score_body", |b| {
+        b.iter(|| scorer::score_body(black_box(SAMPLE), &ds).unwrap())
     });
 }
 
-criterion_group!(
-    benches,
-    bench_parse,
-    bench_vectorize,
-    bench_search,
-    bench_end_to_end
-);
+criterion_group!(benches, bench_vectorize_body, bench_search, bench_end_to_end);
 criterion_main!(benches);

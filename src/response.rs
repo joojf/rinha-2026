@@ -1,5 +1,8 @@
 use bytes::Bytes;
-use http::{StatusCode, response::Builder};
+use http::{
+    HeaderValue, StatusCode,
+    header::{CONTENT_LENGTH, CONTENT_TYPE},
+};
 use monoio_http::{
     common::response::Response,
     h1::payload::{FixedPayload, Payload},
@@ -18,36 +21,33 @@ const BODY_LENS: [&str; 6] = ["35", "35", "35", "36", "36", "36"];
 pub fn ok_fraud_score(fraud_count: u8) -> Response {
     let idx = fraud_count.min(5) as usize;
     let body = BODIES[idx];
-    Builder::new()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .header("content-length", BODY_LENS[idx])
-        .body(Payload::Fixed(FixedPayload::new(Bytes::from_static(body))))
-        .unwrap()
+    let mut resp = Response::new(Payload::Fixed(FixedPayload::new(Bytes::from_static(body))));
+    *resp.status_mut() = StatusCode::OK;
+    resp.headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    resp.headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from_static(BODY_LENS[idx]));
+    resp
 }
 
 pub fn ok_ready() -> Response {
-    Builder::new()
-        .status(StatusCode::OK)
-        .header("content-length", "0")
-        .body(Payload::None)
-        .unwrap()
+    empty(StatusCode::OK)
 }
 
 pub fn not_ready() -> Response {
-    Builder::new()
-        .status(StatusCode::SERVICE_UNAVAILABLE)
-        .header("content-length", "0")
-        .body(Payload::None)
-        .unwrap()
+    empty(StatusCode::SERVICE_UNAVAILABLE)
 }
 
 pub fn not_found() -> Response {
-    Builder::new()
-        .status(StatusCode::NOT_FOUND)
-        .header("content-length", "0")
-        .body(Payload::None)
-        .unwrap()
+    empty(StatusCode::NOT_FOUND)
+}
+
+fn empty(status: StatusCode) -> Response {
+    let mut resp = Response::new(Payload::None);
+    *resp.status_mut() = status;
+    resp.headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
+    resp
 }
 
 #[cfg(test)]

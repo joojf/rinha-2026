@@ -1,6 +1,7 @@
 services:
   api1:
     build: .
+    platform: linux/amd64
     environment:
       - LISTEN_UDS=/sockets/api1.sock
     volumes:
@@ -21,6 +22,7 @@ services:
 
   api2:
     build: .
+    platform: linux/amd64
     environment:
       - LISTEN_UDS=/sockets/api2.sock
     volumes:

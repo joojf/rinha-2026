@@ -2,11 +2,9 @@ use monoio::{IoUringDriver, net::TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 
-use rinha_2026::{DATASET, MCC, NORM, READY, dataset, mcc_risk, normalization, search, server};
+use rinha_2026::{DATASET, READY, dataset, search, server};
 
 fn main() {
-    NORM.set(normalization::Normalization::load_embedded()).ok();
-    MCC.set(mcc_risk::MccRisk::load_embedded()).ok();
     DATASET
         .set(dataset::Dataset::load_embedded().expect("falha ao carregar dataset"))
         .ok();
@@ -47,7 +45,8 @@ fn warm_up() {
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             *v = (state >> 8) as f32 / (1u32 << 24) as f32;
         }
-        let _ = search::knn5_fraud_count_ivf(&q, ds);
+        let qi = q.map(|v| (v * 10000.0).round() as i16);
+        let _ = search::knn5_fraud_count_ivf_i16(&qi, ds);
     }
     let elapsed = start.elapsed();
     eprintln!("warm-up: {:?} (50 buscas)", elapsed);
