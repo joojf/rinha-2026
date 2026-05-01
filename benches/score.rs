@@ -1,5 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use rinha_2026::{dataset::Dataset, scorer, search::knn5_fraud_count_ivf_i16};
+use rinha_2026::{
+    DATASET, dataset::Dataset, scorer, server, search::knn5_fraud_count_ivf_i16,
+};
 use std::hint::black_box;
 
 static SAMPLE: &[u8] = br#"{
@@ -36,5 +38,26 @@ fn bench_end_to_end(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_vectorize_body, bench_search, bench_end_to_end);
+fn bench_raw_http_endpoint(c: &mut Criterion) {
+    let _ = DATASET.set(Dataset::load_embedded().unwrap());
+    let mut req = Vec::with_capacity(SAMPLE.len() + 96);
+    req.extend_from_slice(
+        b"POST /fraud-score HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: ",
+    );
+    req.extend_from_slice(SAMPLE.len().to_string().as_bytes());
+    req.extend_from_slice(b"\r\n\r\n");
+    req.extend_from_slice(SAMPLE);
+
+    c.bench_function("raw_http_endpoint", |b| {
+        b.iter(|| server::response_for_http_request(black_box(&req)).unwrap())
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_vectorize_body,
+    bench_search,
+    bench_end_to_end,
+    bench_raw_http_endpoint
+);
 criterion_main!(benches);
