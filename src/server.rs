@@ -9,18 +9,20 @@ use crate::{DATASET, READY, scorer};
 const READ_CHUNK: usize = 4096;
 const MAX_PENDING: usize = 16384;
 
-const READY_OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+const READY_OK: &[u8] =
+    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
 const READY_NOT_YET: &[u8] =
-    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
-const NOT_FOUND: &[u8] = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+const NOT_FOUND: &[u8] =
+    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
 
 const FRAUD_RESPONSES: [&[u8]; 6] = [
-    b"HTTP/1.1 200 OK\r\nContent-Length: 35\r\n\r\n{\"approved\":true,\"fraud_score\":0.0}",
-    b"HTTP/1.1 200 OK\r\nContent-Length: 35\r\n\r\n{\"approved\":true,\"fraud_score\":0.2}",
-    b"HTTP/1.1 200 OK\r\nContent-Length: 35\r\n\r\n{\"approved\":true,\"fraud_score\":0.4}",
-    b"HTTP/1.1 200 OK\r\nContent-Length: 36\r\n\r\n{\"approved\":false,\"fraud_score\":0.6}",
-    b"HTTP/1.1 200 OK\r\nContent-Length: 36\r\n\r\n{\"approved\":false,\"fraud_score\":0.8}",
-    b"HTTP/1.1 200 OK\r\nContent-Length: 36\r\n\r\n{\"approved\":false,\"fraud_score\":1.0}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\nConnection: keep-alive\r\n\r\n{\"approved\":true,\"fraud_score\":0.0}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\nConnection: keep-alive\r\n\r\n{\"approved\":true,\"fraud_score\":0.2}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\nConnection: keep-alive\r\n\r\n{\"approved\":true,\"fraud_score\":0.4}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: keep-alive\r\n\r\n{\"approved\":false,\"fraud_score\":0.6}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: keep-alive\r\n\r\n{\"approved\":false,\"fraud_score\":0.8}",
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: keep-alive\r\n\r\n{\"approved\":false,\"fraud_score\":1.0}",
 ];
 
 pub async fn accept_loop_tcp(listener: TcpListener) {
@@ -85,8 +87,10 @@ pub fn response_for_http_request(req: &[u8]) -> Option<&'static [u8]> {
 fn response_for_pending(buf: &[u8]) -> Option<(usize, &'static [u8])> {
     let header_end = find_header_end(buf)?;
     let header_len = header_end + 4;
+    let first_line_end = find_byte(&buf[..header_end], b'\n')?;
+    let first_line = trim_cr(&buf[..first_line_end]);
 
-    if buf.starts_with(b"GET /ready ") {
+    if first_line.starts_with(b"GET /ready ") {
         return Some((
             header_len,
             if READY.load(Ordering::Acquire) {
@@ -103,7 +107,7 @@ fn response_for_pending(buf: &[u8]) -> Option<(usize, &'static [u8])> {
         return None;
     }
 
-    if buf.starts_with(b"POST /fraud-score ") {
+    if first_line.starts_with(b"POST /fraud-score ") {
         let body = &buf[header_len..total_len];
         let fraud_count = DATASET
             .get()
@@ -132,18 +136,25 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 }
 
 fn content_length(headers: &[u8]) -> Option<usize> {
-    const NAME: &[u8] = b"content-length:";
-    let last = headers.len().saturating_sub(NAME.len());
-    let mut i = 0usize;
-    while i <= last {
-        if (i == 0 || headers[i - 1] == b'\n')
-            && eq_ignore_ascii_case(&headers[i..i + NAME.len()], NAME)
-        {
-            return parse_usize(skip_ws(&headers[i + NAME.len()..]));
+    for line in headers.split(|b| *b == b'\n').skip(1) {
+        let line = trim_cr(line);
+        let colon = find_byte(line, b':')?;
+        let (name, value) = line.split_at(colon);
+        if eq_ignore_ascii_case(name, b"content-length") {
+            return parse_usize(skip_ws(&value[1..]));
         }
-        i += 1;
     }
     None
+}
+
+#[inline]
+fn find_byte(buf: &[u8], needle: u8) -> Option<usize> {
+    buf.iter().position(|b| *b == needle)
+}
+
+#[inline]
+fn trim_cr(line: &[u8]) -> &[u8] {
+    line.strip_suffix(b"\r").unwrap_or(line)
 }
 
 #[inline]
