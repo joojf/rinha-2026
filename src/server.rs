@@ -87,10 +87,8 @@ pub fn response_for_http_request(req: &[u8]) -> Option<&'static [u8]> {
 fn response_for_pending(buf: &[u8]) -> Option<(usize, &'static [u8])> {
     let header_end = find_header_end(buf)?;
     let header_len = header_end + 4;
-    let first_line_end = find_byte(&buf[..header_end], b'\n')?;
-    let first_line = trim_cr(&buf[..first_line_end]);
 
-    if first_line.starts_with(b"GET /ready ") {
+    if buf.starts_with(b"GET /ready ") {
         return Some((
             header_len,
             if READY.load(Ordering::Acquire) {
@@ -107,7 +105,7 @@ fn response_for_pending(buf: &[u8]) -> Option<(usize, &'static [u8])> {
         return None;
     }
 
-    if first_line.starts_with(b"POST /fraud-score ") {
+    if buf.starts_with(b"POST /fraud-score ") {
         let body = &buf[header_len..total_len];
         let fraud_count = DATASET
             .get()
@@ -136,25 +134,18 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 }
 
 fn content_length(headers: &[u8]) -> Option<usize> {
-    for line in headers.split(|b| *b == b'\n').skip(1) {
-        let line = trim_cr(line);
-        let colon = find_byte(line, b':')?;
-        let (name, value) = line.split_at(colon);
-        if eq_ignore_ascii_case(name, b"content-length") {
-            return parse_usize(skip_ws(&value[1..]));
+    const NAME: &[u8] = b"content-length:";
+    let last = headers.len().saturating_sub(NAME.len());
+    let mut i = 0usize;
+    while i <= last {
+        if (i == 0 || headers[i - 1] == b'\n')
+            && eq_ignore_ascii_case(&headers[i..i + NAME.len()], NAME)
+        {
+            return parse_usize(skip_ws(&headers[i + NAME.len()..]));
         }
+        i += 1;
     }
     None
-}
-
-#[inline]
-fn find_byte(buf: &[u8], needle: u8) -> Option<usize> {
-    buf.iter().position(|b| *b == needle)
-}
-
-#[inline]
-fn trim_cr(line: &[u8]) -> &[u8] {
-    line.strip_suffix(b"\r").unwrap_or(line)
 }
 
 #[inline]
@@ -174,7 +165,7 @@ fn parse_usize(s: &[u8]) -> Option<usize> {
                 seen = true;
                 n = n.checked_mul(10)?.checked_add((b - b'0') as usize)?;
             }
-            b' ' | b'\t' => break,
+            b' ' | b'\t' | b'\r' | b'\n' => break,
             _ => return None,
         }
     }
@@ -219,10 +210,9 @@ mod tests {
 
     #[test]
     fn invalid_fraud_body_returns_score_zero() {
-        let resp = response_for_http_request(
-            b"POST /fraud-score HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc",
-        )
-        .unwrap();
+        let req = b"POST /fraud-score HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc";
+        let (consumed, resp) = response_for_pending(req).unwrap();
+        assert_eq!(consumed, req.len());
         assert!(std::str::from_utf8(resp).unwrap().contains("\"fraud_score\":0.0"));
     }
 
