@@ -2,6 +2,6 @@
     "participants": ["Jorge Filipe"],
     "social": ["https://github.com/joojf"],
     "source-code-repo": "https://github.com/joojf/rinha-2026",
-    "stack": ["rust", "monoio", "io_uring", "nginx"],
+    "stack": ["rust", "monoio", "io_uring", "haproxy"],
     "open_to_work": false
 }
