@@ -17,7 +17,7 @@ A API fica disponível em `http://localhost:9999`.
 
 ## Topologia
 
-Produção: 2 instâncias API comunicam com o nginx via Unix sockets (`/sockets/api1.sock`, `/sockets/api2.sock`). Sem TCP local entre LB e APIs.
+Produção: 2 instâncias API comunicam com o haproxy (round-robin) via Unix sockets (`/sockets/api1.sock`, `/sockets/api2.sock`). Sem TCP local entre LB e APIs.
 
 Dev (sem Docker): `LISTEN_TCP=0.0.0.0:8080 cargo run --release`
 

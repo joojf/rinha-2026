@@ -13,7 +13,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
+          cpus: "0.35"
           memory: 165MB
     ulimits:
       nofile:
@@ -34,7 +34,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
+          cpus: "0.35"
           memory: 165MB
     ulimits:
       nofile:
@@ -42,9 +42,9 @@ services:
         hard: 65535
 
   lb:
-    image: nginx:1.27-alpine
+    image: haproxy:lts-alpine
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - sockets:/sockets
     ports:
       - "9999:9999"
@@ -56,14 +56,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.50"
+          cpus: "0.30"
           memory: 20MB
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
-    sysctls:
-      net.core.somaxconn: 4096
 
 volumes:
   sockets:
